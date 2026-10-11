@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import type { InputRef } from 'antd'
-import { Alert, App, Badge, Button, Form, Input, Progress, Space, Tag } from 'antd'
+import { Alert, App, Badge, Button, Form, Input, Progress, Space, Tag, Modal } from 'antd'
 import {
   AudioMutedOutlined,
   AudioOutlined,
@@ -14,12 +14,14 @@ import {
 import type { Snapshot } from './types'
 import { useQueryClient } from '@tanstack/react-query'
 import CallHistory, { callHistoryKey } from './CallHistory'
+import { createCallSocket, sendCallCommand } from './connection'
 import { startRingback } from './ringback'
 
 type CallState = {
   state: string
   call_id?: string
   sample_rate?: number
+  to?: string
   reason?: string
   up_bytes?: number
   down_bytes?: number
@@ -29,6 +31,8 @@ type CallState = {
 }
 const labels: Record<string, string> = {
   idle: '未通话',
+  incoming: '来电待接听',
+  answering: '正在接听',
   dialing: '拨号中',
   connected: '已接通，建立音频中',
   streaming: '实时通话中',
@@ -56,9 +60,11 @@ const keypad = [
 export default function CallPanel({
   device,
   ready,
+  onAnswer,
 }: {
   device: Snapshot['device']
   ready: boolean
+  onAnswer: () => void
 }) {
   const { message } = App.useApp()
   const queryClient = useQueryClient()
@@ -87,6 +93,7 @@ export default function CallPanel({
   const playingSequence = useRef(-1)
   const stats = useRef({ up: 0, down: 0, last: 0 })
   const mine = useRef<string | null>(null)
+  const audioGeneration = useRef(0)
   const ringback = useRef<(() => void) | null>(null)
 
   function stopRingback() {
@@ -95,6 +102,7 @@ export default function CallPanel({
   }
 
   function releaseAudio() {
+    audioGeneration.current++
     stopRingback()
     microphone.current?.getTracks().forEach((track) => track.stop())
     microphone.current = null
@@ -108,10 +116,7 @@ export default function CallPanel({
   }
   useEffect(() => {
     let reconnect: ReturnType<typeof setTimeout> | undefined
-    const ws = new WebSocket(
-      `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/call`,
-    )
-    ws.binaryType = 'arraybuffer'
+    const ws = createCallSocket()
     socket.current = ws
     ws.onopen = () => {
       if (socket.current === ws) setConnected(true)
@@ -121,7 +126,11 @@ export default function CallPanel({
       setConnected(false)
       releaseAudio()
       if (!terminal.has(callRef.current.state))
-        setError('通话连接已断开；设备将自动挂断，不会重拨。')
+        setError(
+          callRef.current.state === 'incoming'
+            ? '来电通知连接已断开，正在重连。'
+            : '通话连接已断开；设备将自动挂断，不会重拨。',
+        )
       setPreparing(false)
       mine.current = null
       reconnect = setTimeout(() => setSocketGeneration((value) => value + 1), 1500)
@@ -193,10 +202,12 @@ export default function CallPanel({
     }
   }, [socketGeneration])
 
-  async function dial({ to }: { to: string }) {
+  async function dial({ to }: { to: string }, incomingId?: string) {
     if (socket.current?.readyState !== WebSocket.OPEN) return
     setError('')
     setPreparing(true)
+    const generation = audioGeneration.current
+    const ws = socket.current
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -206,11 +217,26 @@ export default function CallPanel({
           channelCount: 1,
         },
       })
+      if (
+        generation !== audioGeneration.current ||
+        socket.current !== ws ||
+        ws.readyState !== WebSocket.OPEN
+      ) {
+        stream.getTracks().forEach((track) => track.stop())
+        throw new Error('通话状态已变化，请重新操作')
+      }
       microphone.current = stream
       const audio = new AudioContext()
       context.current = audio
       await audio.resume()
       await audio.audioWorklet.addModule(new URL('./pcm-worklet.js', import.meta.url))
+      if (generation !== audioGeneration.current) throw new Error('通话已结束')
+      if (
+        incomingId &&
+        (callRef.current.state !== 'incoming' || callRef.current.call_id !== incomingId)
+      )
+        throw new Error('来电已结束或已由其他页面接听')
+      if (!incomingId && !terminal.has(callRef.current.state)) throw new Error('设备已有通话')
       const node = new AudioWorkletNode(audio, 'pcm-capture')
       capture.current = node
       audio.createMediaStreamSource(stream).connect(node)
@@ -244,15 +270,19 @@ export default function CallPanel({
           stats.current.last = performance.now()
         }
       }
-      const request_id = crypto.randomUUID()
-      mine.current = request_id
-      if (socket.current?.readyState !== WebSocket.OPEN) throw new Error('服务已断开')
-      socket.current.send(JSON.stringify({ action: 'call_dial', request_id, to }))
-      setLastNumber(to)
+      const callId = incomingId ?? crypto.randomUUID()
+      mine.current = callId
+      sendCallCommand(
+        socket.current,
+        incomingId ? 'call_answer' : 'call_dial',
+        incomingId ? { call_id: callId } : { request_id: callId, to },
+      )
+      if (incomingId) onAnswer()
+      else setLastNumber(to)
       setDigits('')
       setPreparing(false)
     } catch (cause) {
-      releaseAudio()
+      if (generation === audioGeneration.current) releaseAudio()
       setPreparing(false)
       const text = cause instanceof Error ? cause.message : '无法启动麦克风'
       setError(text)
@@ -292,6 +322,45 @@ export default function CallPanel({
   }
   return (
     <>
+      <Modal
+        title="设备来电"
+        open={call.state === 'incoming'}
+        closable={false}
+        maskClosable={false}
+        keyboard={false}
+        footer={null}
+      >
+        <p role="status" className="break-all font-mono text-xl">
+          {call.to || '未知号码'}
+        </p>
+        <p className="text-sm text-slate-500">接听后使用电脑麦克风和耳机通话。请允许麦克风权限。</p>
+        {error && <Alert className="mb-4!" type="error" showIcon title={error} />}
+        <div className="flex flex-wrap gap-3">
+          <Button
+            type="primary"
+            icon={<PhoneOutlined />}
+            loading={preparing}
+            disabled={!ready || !connected}
+            onClick={() => void dial({ to: call.to ?? '' }, call.call_id)}
+          >
+            接听
+          </Button>
+          <Button
+            danger
+            icon={<StopOutlined />}
+            disabled={!connected || preparing}
+            onClick={() => {
+              try {
+                sendCallCommand(socket.current, 'call_reject', { call_id: call.call_id! })
+              } catch (cause) {
+                setError(cause instanceof Error ? cause.message : '拒接失败')
+              }
+            }}
+          >
+            拒接
+          </Button>
+        </div>
+      </Modal>
       <section
         id="call-workspace"
         className="mb-6 scroll-mt-4 rounded-2xl border border-[#dce5ed] bg-white p-6 max-[740px]:p-5"
@@ -309,9 +378,9 @@ export default function CallPanel({
           </Space>
         </div>
         <p className="mb-4 text-xs text-[#6d8195]">
-          用电脑麦克风和耳机通话。验证版单次最长 90
-          秒；关闭页面会挂断。建议戴耳机。接通后自动保存双向录音。
+          用电脑麦克风和耳机通话。来电时可选择接听或拒接，关闭接听或拨号的页面会挂断。建议戴耳机。接通后自动保存双向录音。
         </p>
+        {active && call.to && <p className="break-all font-mono text-sm">{call.to}</p>}
         {call.state === 'dialing' && mine.current === call.call_id && (
           <p role="status" className="mb-4 text-xs text-[#6d8195]">
             等待接通 · 正在播放本地拨号提示音
@@ -364,15 +433,13 @@ export default function CallPanel({
             danger
             icon={<StopOutlined />}
             disabled={!active || mine.current !== call.call_id}
-            onClick={() =>
-              socket.current?.send(
-                JSON.stringify({
-                  action: 'call_hangup',
-                  request_id: crypto.randomUUID(),
-                  call_id: call.call_id,
-                }),
-              )
-            }
+            onClick={() => {
+              try {
+                sendCallCommand(socket.current, 'call_hangup', { call_id: call.call_id! })
+              } catch (cause) {
+                setError(cause instanceof Error ? cause.message : '挂断失败')
+              }
+            }}
           >
             挂断
           </Button>

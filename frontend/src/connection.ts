@@ -108,3 +108,20 @@ class Connection {
   }
 }
 export const connection = new Connection()
+
+export function createCallSocket() {
+  const socket = new WebSocket(
+    `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/call`,
+  )
+  socket.binaryType = 'arraybuffer'
+  return socket
+}
+
+export function sendCallCommand(
+  socket: WebSocket | null,
+  action: string,
+  data: Record<string, string>,
+) {
+  if (socket?.readyState !== WebSocket.OPEN) throw new Error('通话服务已断开')
+  socket.send(JSON.stringify({ action, request_id: crypto.randomUUID(), ...data }))
+}

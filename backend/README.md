@@ -15,6 +15,12 @@ uv run --directory backend uvicorn app.main:app --host 127.0.0.1 --port 9010
 `AIR780_DATA_DIR` 可指定存储目录，默认项目根目录的 `data/`。
 保持单 worker；文件锁会阻止同一数据目录的另一个桥接进程启动。
 服务运行期间不要同时启动原来的串口查询、监听或烧录脚本。
+
+`set_sim_number` / `clear_sim_number` 是本机配置命令，通过 `/ws` 提交，
+以 `sim_id` 携带界面所见 ICCID，设置命令通过 `to` 传入确认的号码。
+只允许设置当前就绪 SIM，ICCID 变化时拒绝旧页面的请求；配置写入 SQLite
+`sim_numbers` 表，不发送到设备，不产生短信或电话。快照中的 `mobile.number_source`
+区分 `sim`、`manual`、`unavailable`，SIM 返回的号码优先于人工标注。
 需要烧录时先停止服务，烧录后重新启动。
 
 ## 接口

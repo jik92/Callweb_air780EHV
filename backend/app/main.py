@@ -34,10 +34,13 @@ ALLOWED_ORIGINS = {
 
 class Command(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    action: Literal["get_status", "get_inbox", "send_sms", "ping"]
+    action: Literal[
+        "get_status", "get_inbox", "send_sms", "ping", "set_sim_number", "clear_sim_number"
+    ]
     request_id: UUID
     to: str | None = Field(default=None, pattern=r"^\+?\d{5,20}$")
     content: str | None = None
+    sim_id: str | None = None
 
     @field_validator("content")
     @classmethod
@@ -62,10 +65,23 @@ class Service:
         self.calls = Calls(self)
 
     def snapshot(self):
+        device = self.device
+        if device:
+            mobile = dict(device.get("mobile", {}))
+            saved = self.store.sim_number(mobile.get("iccid", ""))
+            mobile["number_source"] = "sim" if mobile.get("number") else "unavailable"
+            mobile["manual_number"] = saved["phone"] if saved else ""
+            if not mobile.get("number") and saved:
+                mobile.update(
+                    number=saved["phone"],
+                    number_source="manual",
+                    number_confirmed_at=saved["confirmed_at"],
+                )
+            device = {**device, "mobile": mobile}
         return {
             "type": "snapshot",
             "bridge": {**self.connection, "last_seen": self.last_seen},
-            "device": self.device,
+            "device": device,
             "messages": self.store.list(),
         }
 
@@ -144,6 +160,21 @@ class Service:
                 raise ValueError("请填写收件号码和短信内容")
         if not self.connection["ready"]:
             raise ValueError("设备尚未连接，请检查 USB 和串口占用")
+        if command.action in ("set_sim_number", "clear_sim_number"):
+            mobile = (self.device or {}).get("mobile", {})
+            sim_id = mobile.get("iccid")
+            if not mobile.get("sim_ready") or not sim_id:
+                raise ValueError("SIM 卡未就绪或无法读取 ICCID")
+            if command.sim_id != sim_id:
+                raise ValueError("SIM 卡已变化，请关闭窗口后重新设置")
+            if command.action == "set_sim_number":
+                if not command.to:
+                    raise ValueError("请输入已确认的本机号码")
+                self.store.set_sim_number(sim_id, command.to)
+            else:
+                self.store.clear_sim_number(sim_id)
+            self.broadcast()
+            return {"type": "command_ack", "request_id": request_id}
         if command.action == "send_sms":
             if not self.device["mobile"].get("sms_ready"):
                 raise ValueError("设备短信功能尚未就绪")

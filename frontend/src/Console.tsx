@@ -11,6 +11,7 @@ import {
   Input,
   Layout,
   Menu,
+  Modal,
   Segmented,
   Spin,
   Tag,
@@ -111,6 +112,8 @@ function Info({
 export default function Console() {
   const { message } = App.useApp()
   const [form] = Form.useForm()
+  const [numberForm] = Form.useForm()
+  const [numberSim, setNumberSim] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(false)
   const [narrow, setNarrow] = useState(false)
   const [navigation, setNavigation] = useState('overview')
@@ -136,6 +139,23 @@ export default function Console() {
   const data = state.data
   const mobile = data?.device?.mobile
   const ready = wsStatus === 'connected' && data?.bridge.ready === true
+  const saveNumber = useMutation({
+    mutationFn: (values: { to: string }) =>
+      connection.command('set_sim_number', { to: values.to.trim(), sim_id: numberSim ?? '' }),
+    onSuccess: () => {
+      setNumberSim(null)
+      message.success('本机号码已保存，来源为人工确认')
+    },
+    onError: (error) => message.error(error.message),
+  })
+  const clearNumber = useMutation({
+    mutationFn: () => connection.command('clear_sim_number', { sim_id: numberSim ?? '' }),
+    onSuccess: () => {
+      setNumberSim(null)
+      message.success('已移除人工标注')
+    },
+    onError: (error) => message.error(error.message),
+  })
   const busy = data?.messages.some((item) => ['queued', 'sending'].includes(item.state)) ?? false
   const refresh = useMutation({
     mutationFn: async () => {
@@ -235,7 +255,11 @@ export default function Console() {
           />
           {/* Keep the call owner mounted so menu navigation never interrupts audio. */}
           <div hidden={navigation !== 'call'}>
-            <CallPanel device={data?.device ?? null} ready={ready} />
+            <CallPanel
+              device={data?.device ?? null}
+              ready={ready}
+              onAnswer={() => setNavigation('call')}
+            />
           </div>
           <div className="min-w-0">
             <aside
@@ -295,7 +319,26 @@ export default function Console() {
                 <div className="mt-[18px] mb-3 border-y border-[#e9eff5] py-[19px] [&>span]:block [&>span]:text-xs [&>span]:text-[#6d8195] [&_strong]:my-2 [&_strong]:block [&_strong]:text-[22px] [&_strong]:font-[550] [&_p]:m-0 [&_p]:text-xs [&_p]:text-[#8a9aac]">
                   <span>本机号码</span>
                   <strong>{mobile?.number || '暂未提供'}</strong>
-                  {!mobile?.number && <p>当前 SIM 未返回本机号码</p>}
+                  <p>
+                    {mobile?.number_source === 'manual'
+                      ? '人工确认 · 按当前 SIM 卡保存'
+                      : mobile?.number
+                        ? '来源：SIM 卡'
+                        : '当前 SIM 未返回本机号码，可手动设置'}
+                  </p>
+                  <Button
+                    className="mt-3"
+                    size="small"
+                    disabled={!ready || !mobile?.sim_ready || !mobile?.iccid}
+                    onClick={() => {
+                      numberForm.setFieldsValue({
+                        to: mobile?.manual_number || mobile?.number || '',
+                      })
+                      setNumberSim(mobile?.iccid ?? null)
+                    }}
+                  >
+                    {mobile?.manual_number ? '修改本机号码' : '设置本机号码'}
+                  </Button>
                 </div>
                 <Info label="ICCID" value={mobile?.iccid} copy />
                 <Info label="IMSI" value={mobile?.imsi} copy />
@@ -520,6 +563,60 @@ export default function Console() {
           </Typography.Text>
         </Footer>
       </Layout>
+      <Modal
+        title="设置本机号码"
+        open={numberSim !== null}
+        onCancel={() => {
+          if (!saveNumber.isPending && !clearNumber.isPending) setNumberSim(null)
+        }}
+        footer={null}
+        destroyOnHidden
+      >
+        <p className="text-sm leading-6 text-slate-500">
+          请填写设备发短信后，你在接收手机上看到的发件号码。该号码将标注为“人工确认”，仅保存到当前
+          SIM 卡。
+        </p>
+        <Form form={numberForm} layout="vertical" onFinish={(values) => saveNumber.mutate(values)}>
+          <p className="mb-4 text-sm leading-6 text-slate-500">
+            当前短信数据仅提供发件人号码，未提供本机收件号码，暂时无法生成收件号码备选。
+          </p>
+          <Form.Item
+            name="to"
+            label="已确认的本机号码"
+            rules={[
+              { required: true, message: '请输入号码' },
+              { pattern: /^\+?\d{5,20}$/, message: '请输入 5–20 位号码，可包含开头的 +' },
+            ]}
+          >
+            <Input
+              inputMode="tel"
+              autoComplete="off"
+              placeholder="填写手机上看到的设备发件号码"
+              disabled={saveNumber.isPending || clearNumber.isPending}
+            />
+          </Form.Item>
+          <div className="flex flex-wrap justify-end gap-2">
+            {mobile?.manual_number && (
+              <Button
+                danger
+                loading={clearNumber.isPending}
+                disabled={saveNumber.isPending || !ready || mobile.iccid !== numberSim}
+                onClick={() => clearNumber.mutate()}
+              >
+                移除人工标注
+              </Button>
+            )}
+            <Button
+              type="primary"
+              htmlType="submit"
+              loading={saveNumber.isPending}
+              disabled={clearNumber.isPending || !ready || mobile?.iccid !== numberSim}
+            >
+              保存号码
+            </Button>
+          </div>
+        </Form>
+      </Modal>
     </Layout>
   )
 }

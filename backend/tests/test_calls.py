@@ -166,3 +166,136 @@ def test_audio_websocket_roundtrip_and_disconnect(tmp_path, monkeypatch):
                 break
             client.get("/api/health")
         assert sent[-1]["action"] == "call_hangup"
+
+
+def incoming_service(tmp_path):
+    service = Service(Store(tmp_path / "sms.db"))
+    sent = []
+
+    class Bridge:
+        def send(self, command):
+            sent.append(command)
+
+        def send_audio(self, frame):
+            sent.append(frame)
+            return False
+
+    service.bridge = Bridge()
+    service.connection["ready"] = True
+    service.device = {"call": {"ready": True, "audio_ready": True, "live_supported": True}}
+    return service, sent
+
+
+def test_incoming_answer_ownership_and_long_call(tmp_path):
+    import asyncio
+    import time
+
+    service, sent = incoming_service(tmp_path)
+    calls = service.calls
+    owner, stranger = object(), object()
+    calls.clients[owner] = asyncio.Queue(maxsize=16)
+    calls.clients[stranger] = asyncio.Queue(maxsize=16)
+    call_id = str(uuid4())
+    ring = {
+        "type": "call_event",
+        "request_id": call_id,
+        "state": "INCOMINGCALL",
+        "to": "+15555550100",
+    }
+    calls.event(ring)
+    calls.event(ring)
+    assert calls.state["state"] == "incoming"
+    assert calls.clients[stranger].get_nowait()["state"] == "incoming"
+    assert len(service.store.call_list()) == 1
+    assert sent == []  # Ringing never answers automatically.
+    command = {"action": "call_answer", "request_id": str(uuid4()), "call_id": call_id}
+    calls.command(command, owner)
+    assert sent == [{"action": "call_answer", "request_id": call_id}]
+    with pytest.raises(ValueError, match="其他页面"):
+        calls.command({**command, "request_id": str(uuid4())}, stranger)
+    calls.event(ring)  # Repeated network ring indications cannot undo answer ownership.
+    assert calls.state["state"] == "answering"
+    calls.event({"type": "call_event", "request_id": call_id, "state": "SPEECH_START"})
+    calls.event(
+        {
+            "type": "call_event",
+            "request_id": call_id,
+            "state": "stream_started",
+            "sample_rate": 8000,
+        }
+    )
+    calls.state["started_at"] = time.time() - 300
+    calls.tick()
+    assert calls.state["state"] == "streaming"
+    packet = struct.pack("<I", 0) + b"\x00\x00" * 320
+    calls.audio(packet, stranger)
+    assert len(sent) == 1
+    calls.audio(packet, owner)
+    assert len(sent) == 2
+    calls.event(
+        {"type": "call_result", "request_id": call_id, "connected": True, "reason": "DISCONNECTED"}
+    )
+    assert calls.state["state"] == "ended"
+    assert service.store.call_get(call_id)["sample_rate"] == 8000
+    service.store.close()
+
+
+def test_incoming_reject_and_caller_cancels(tmp_path):
+    service, sent = incoming_service(tmp_path)
+    calls = service.calls
+    call_id = str(uuid4())
+    calls.event(
+        {"type": "status_response", "call": {"state": "incoming", "request_id": call_id, "to": ""}}
+    )
+    calls.command(
+        {"action": "call_reject", "request_id": str(uuid4()), "call_id": call_id}, object()
+    )
+    assert sent == [{"action": "call_hangup", "request_id": call_id}]
+    calls.event(
+        {"type": "call_result", "request_id": call_id, "connected": False, "reason": "user_hangup"}
+    )
+    assert calls.state["reason"] == "user_rejected"
+    other_id = str(uuid4())
+    calls.event(
+        {
+            "type": "call_event",
+            "request_id": other_id,
+            "state": "INCOMINGCALL",
+            "to": "+15555550100",
+        }
+    )
+    calls.event(
+        {
+            "type": "call_result",
+            "request_id": other_id,
+            "connected": False,
+            "reason": "DISCONNECTED",
+        }
+    )
+    with pytest.raises(ValueError, match="来电已结束"):
+        calls.command(
+            {"action": "call_answer", "request_id": str(uuid4()), "call_id": other_id}, object()
+        )
+    assert len(sent) == 1
+    service.store.close()
+
+
+def test_incoming_answer_queue_full_stays_available(tmp_path):
+    import queue
+
+    service, sent = incoming_service(tmp_path)
+    call_id = str(uuid4())
+    service.calls.event({"type": "call_event", "request_id": call_id, "state": "INCOMINGCALL"})
+
+    class FullBridge:
+        def send(self, command):
+            raise queue.Full()
+
+    service.bridge = FullBridge()
+    with pytest.raises(queue.Full):
+        service.calls.command(
+            {"action": "call_answer", "request_id": str(uuid4()), "call_id": call_id}, object()
+        )
+    assert service.calls.state["state"] == "incoming"
+    assert service.calls.owner is None
+    service.store.close()

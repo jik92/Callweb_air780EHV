@@ -25,6 +25,9 @@ export interface Snapshot {
       sim_ready: boolean
       sms_ready: boolean
       number: string
+      number_source?: 'sim' | 'manual' | 'unavailable'
+      manual_number?: string
+      number_confirmed_at?: number
       iccid: string
       imsi: string
       sim_slot: number

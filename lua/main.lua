@@ -1,5 +1,5 @@
 PROJECT = "air780ehv_sim_query"
-VERSION = "001.999.008"
+VERSION = "001.999.009"
 
 sys = require("sys")
 local call_player = require("call_player")
@@ -155,6 +155,7 @@ uart.on(uartid, "receive", function(id, len)
             elseif command.action == "send_sms" then send_sms(command)
             elseif command.action == "call_play" then call_player.start(command)
             elseif command.action == "call_live" then call_player.live(command)
+            elseif command.action == "call_answer" then call_player.answer(command.request_id)
             elseif command.action == "call_hangup" then call_player.hangup(command.request_id) end
             if command.action == "restore_inbox" and type(command.messages) == "table"
                 and #command.messages <= 20 and #inbox == 0 then

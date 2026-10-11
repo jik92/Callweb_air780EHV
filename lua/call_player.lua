@@ -1,4 +1,4 @@
--- One explicitly requested outgoing call, with one TTS playback to the peer.
+-- Explicit outgoing calls and incoming calls answered only by the browser.
 local M = {}
 local exaudio = require("exaudio")
 local ready, audio_ready = false, false
@@ -37,6 +37,7 @@ local function event(state, extra)
     data.type = "call_event"
     data.request_id = active.request_id
     data.to = active.to
+    data.direction = active.incoming and "incoming" or "outgoing"
     data.state = state
     emit(data)
 end
@@ -107,6 +108,14 @@ function M.init(reply, audio_reply)
     sys.subscribe("CC_IND", function(state)
         log.info("call_player", state)
         if state == "READY" then ready = true; sys.publish("CALL_READY") end
+        if state == "INCOMINGCALL" and not active then
+            local id = string.format("%08x-%04x-4%03x-8%03x-%04x%04x%04x",
+                os.time(), math.random(0,65535), math.random(0,4095),
+                math.random(0,4095), math.random(0,65535), math.random(0,65535), math.random(0,65535))
+            for i=1,2 do up[i]:del(); down[i]:del() end
+            rx_queue, tx_queue, rx_sequence = {}, {}, -1
+            active = {request_id=id, to=cc.lastNum() or "", live=true, incoming=true}
+        end
         if not active then return end
         event(state)
         if state == "CONNECTED" or state == "SPEECH_START" then
@@ -146,7 +155,11 @@ end
 
 function M.status()
     return {ready=ready, audio_ready=audio_ready, busy=active ~= nil,
-        live_supported=type(cc.input) == "function", request_id=active and active.request_id,
+        live_supported=type(cc.input) == "function", incoming_supported=true,
+        request_id=active and active.request_id,
+        state=active and (active.started and "streaming" or active.connected and "connected"
+            or active.answering and "answering" or active.incoming and "incoming" or "dialing"),
+        to=active and active.to, direction=active and (active.incoming and "incoming" or "outgoing"),
         up_bytes=active and active.up_bytes or 0, dropped_bytes=active and active.dropped_bytes or 0}
 end
 function M.input(id, sequence, raw)
@@ -159,6 +172,22 @@ function M.input(id, sequence, raw)
         active.dropped_bytes = (active.dropped_bytes or 0) + #dropped
     end
     rx_queue[#rx_queue+1] = raw
+end
+function M.answer(id)
+    if not active or not active.incoming or active.request_id ~= id or active.answering then return end
+    if not ready or not audio_ready then
+        active.reason = "answer_failed"
+        cc.hangUp(0)
+        finish("answer_failed")
+        return
+    end
+    active.answering = true
+    local ok, result = pcall(cc.accept, 0)
+    if not ok or result == false then
+        active.reason = "answer_failed"
+        cc.hangUp(0)
+        finish("answer_failed")
+    end
 end
 function M.hangup(id)
     if active and active.request_id == id then
@@ -225,11 +254,13 @@ function M.start(command)
             active.reason = "answer_timeout"; cc.hangUp(0)
         end
     end, 45000)
-    sys.timerStart(function()
-        if active and active.request_id == id then
-            active.reason = "call_timeout"; cc.extern_source(nil); cc.hangUp(0)
-        end
-    end, 90000)
+    if not command.live then
+        sys.timerStart(function()
+            if active and active.request_id == id then
+                active.reason = "call_timeout"; cc.extern_source(nil); cc.hangUp(0)
+            end
+        end, 90000)
+    end
     local ok, result = pcall(cc.dial, 0, command.to)
     if not ok or result == false then finish("dial_failed") end
 end

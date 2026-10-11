@@ -96,6 +96,24 @@ class Calls:
                 "device_up_bytes": 0,
             }
             self.publish()
+        elif action in ("call_answer", "call_reject"):
+            if self.state["state"] != "incoming" or raw.get("call_id") != self.state.get("call_id"):
+                raise ValueError("来电已结束或已由其他页面处理")
+            if not self.service.connection["ready"]:
+                raise ValueError("设备尚未就绪")
+            if action == "call_reject":
+                self.hangup("user_rejected")
+            else:
+                call = (self.service.device or {}).get("call", {})
+                if not call.get("audio_ready"):
+                    raise ValueError("设备通话音频尚未就绪")
+                self.service.bridge.send(
+                    {"action": "call_answer", "request_id": self.state["call_id"]}
+                )
+                self.owner = owner
+                self.last_audio = time.monotonic()
+                self.state.update(state="answering", transition_at=time.time())
+                self.publish()
         elif action == "call_hangup":
             if self.owner != owner or raw.get("call_id") != self.state.get("call_id"):
                 raise ValueError("只能挂断当前页面发起的通话")
@@ -111,7 +129,7 @@ class Calls:
             return
         try:
             self.service.bridge.send({"action": "call_hangup", "request_id": self.state["call_id"]})
-            self.state.update(state="hanging_up", reason=reason)
+            self.state.update(state="hanging_up", reason=reason, transition_at=time.time())
         except queue.Full:
             self.finish_recording()
             self.state.update(state="unknown", reason="hangup_queue_full", ended_at=time.time())
@@ -165,10 +183,14 @@ class Calls:
             self.publish()
         if kind == "status_response":
             device_call = event.get("call", {})
+            if device_call.get("state") == "incoming":
+                self.incoming(device_call.get("request_id"), device_call.get("to", ""))
             if device_call.get("request_id") == self.state.get("call_id"):
                 self.state["device_up_bytes"] = device_call.get("up_bytes", 0)
                 self.state["device_dropped_bytes"] = device_call.get("dropped_bytes", 0)
                 self.publish()
+        if kind == "call_event" and event.get("state") == "INCOMINGCALL":
+            self.incoming(event.get("request_id"), event.get("to", ""))
         if event.get("request_id") != self.state.get("call_id"):
             return
         if kind == "call_pcm" and self.state["state"] == "streaming":
@@ -202,7 +224,10 @@ class Calls:
                     except (OSError, ValueError) as exc:
                         self.state["recording_error"] = str(exc)
                 self.last_audio = time.monotonic()
-            elif state in ("CONNECTED", "SPEECH_START") and self.state["state"] == "dialing":
+            elif state in ("CONNECTED", "SPEECH_START") and self.state["state"] in (
+                "dialing",
+                "answering",
+            ):
                 self.state.update(state="connected", connected_at=time.time())
             self.state["device_event"] = state
             self.publish()
@@ -210,7 +235,7 @@ class Calls:
             self.finish_recording()
             self.state.update(
                 state="ended" if event.get("connected") else "failed",
-                reason=event.get("reason"),
+                reason=self.state.get("reason") or event.get("reason"),
                 ended_at=time.time(),
                 device_up_bytes=event.get("up_bytes", 0),
                 device_dropped_bytes=event.get("dropped_bytes", 0),
@@ -218,10 +243,40 @@ class Calls:
             self.owner = None
             self.publish()
 
+    def incoming(self, call_id, number):
+        try:
+            call_id = str(UUID(call_id))
+        except (ValueError, TypeError, AttributeError):
+            return
+        if self.active() or self.service.store.call_get(call_id):
+            return
+        self.finish_recording()
+        self.service.store.call_prepare(call_id, number)
+        self.owner = None
+        self.last_sequence = self.last_down_sequence = -1
+        self.state = {
+            "type": "call_state",
+            "state": "incoming",
+            "call_id": call_id,
+            "to": number,
+            "direction": "incoming",
+            "started_at": time.time(),
+            "up_bytes": 0,
+            "down_bytes": 0,
+            "dropped_frames": 0,
+            "device_up_bytes": 0,
+        }
+        self.publish()
+
     def tick(self):
         if self.state["state"] == "streaming" and time.monotonic() - self.last_audio > 5:
             self.hangup("browser_audio_timeout")
-        if self.active() and time.time() - self.state.get("started_at", time.time()) > 100:
+        if (
+            self.state["state"] in ("dialing", "answering", "connected", "hanging_up")
+            and time.time()
+            - self.state.get("transition_at", self.state.get("started_at", time.time()))
+            > 100
+        ):
             self.finish_recording()
             self.state.update(state="unknown", reason="call_result_timeout", ended_at=time.time())
             self.publish()

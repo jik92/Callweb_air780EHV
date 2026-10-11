@@ -17,6 +17,8 @@ type Record = {
 }
 export const callHistoryKey = ['call-history']
 const labels: { [key: string]: string } = {
+  incoming: '来电待接听',
+  answering: '正在接听',
   dialing: '拨号中',
   connected: '已接通',
   streaming: '通话中',
@@ -27,6 +29,8 @@ const labels: { [key: string]: string } = {
 }
 const reasons: { [key: string]: string } = {
   user_hangup: '主动挂断',
+  user_rejected: '拒接来电',
+  answer_failed: '接听失败',
   browser_disconnected: '页面关闭',
   audio_timeout: '音频超时',
   browser_audio_timeout: '网页音频超时',
@@ -71,7 +75,7 @@ export default function CallHistory({ active }: { active: boolean }) {
         </Button>
       </div>
       <p className="mb-4 text-xs leading-6 text-[#6d8195]">
-        每次拨号保存时间和结果。接通后的双向录音保存在本机，可在通话结束后回放。此功能上线前的电话没有录音。
+        来电和拨号均保存时间和结果。接通后的双向录音保存在本机，可在通话结束后回放。此功能上线前的电话没有录音。
       </p>
       {history.isError && (
         <Alert className="mb-3!" type="error" showIcon title="无法读取通话记录，请点击刷新重试。" />
@@ -85,13 +89,13 @@ export default function CallHistory({ active }: { active: boolean }) {
           emptyText: (
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description="暂无通话记录，下一次拨号后自动保存"
+              description="暂无通话记录，来电或拨号后自动保存"
             />
           ),
         }}
         columns={[
           {
-            title: '号码 / 拨号时间',
+            title: '号码 / 通话时间',
             key: 'phone',
             render: (_, record) => (
               <div className="min-w-0">

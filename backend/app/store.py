@@ -23,13 +23,34 @@ class Store:
             id TEXT PRIMARY KEY, phone TEXT NOT NULL, started_at REAL NOT NULL,
             connected_at REAL, ended_at REAL, state TEXT NOT NULL,
             reason TEXT, sample_rate INTEGER, recording_error TEXT)""")
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS sim_numbers (
+            sim_id TEXT PRIMARY KEY, phone TEXT NOT NULL, confirmed_at REAL NOT NULL)""")
         self.conn.execute(
             "UPDATE calls SET state='unknown',reason='service_restarted',ended_at=? "
-            "WHERE state IN ('dialing','connected','streaming','hanging_up')",
+            "WHERE state IN ('dialing','incoming','answering','connected','streaming',"
+            "'hanging_up')",
             (time.time(),),
         )
         self.conn.commit()
         self.mark_unknown("service_restarted")
+
+    def sim_number(self, sim_id):
+        row = self.conn.execute(
+            "SELECT phone,confirmed_at FROM sim_numbers WHERE sim_id=?", (sim_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def set_sim_number(self, sim_id, phone):
+        self.conn.execute(
+            "INSERT INTO sim_numbers VALUES (?,?,?) ON CONFLICT(sim_id) "
+            "DO UPDATE SET phone=excluded.phone,confirmed_at=excluded.confirmed_at",
+            (sim_id, phone, time.time()),
+        )
+        self.conn.commit()
+
+    def clear_sim_number(self, sim_id):
+        self.conn.execute("DELETE FROM sim_numbers WHERE sim_id=?", (sim_id,))
+        self.conn.commit()
 
     def call_get(self, call_id):
         row = self.conn.execute("SELECT * FROM calls WHERE id=?", (call_id,)).fetchone()
