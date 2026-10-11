@@ -46,6 +46,8 @@ async def probe(service, request):
         raise HTTPException(409, "已有网络测试进行中")
     if service.location.waiter is not None:
         raise HTTPException(409, "请等待基站定位完成")
+    if service.usb_network.waiter or service.usb_network.state["state"] == "switching":
+        raise HTTPException(409, "请等待 USB 网卡切换完成")
     request_id = str(uuid4())
     future = asyncio.get_running_loop().create_future()
     service.network_waiter = (request_id, future)

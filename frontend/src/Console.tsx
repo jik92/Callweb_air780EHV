@@ -284,7 +284,13 @@ export default function Console() {
           />
           {/* Keep the call owner mounted so menu navigation never interrupts audio. */}
           <div hidden={navigation !== 'network'}>
-            <NetworkTest ready={ready} supported={data?.device?.network_test_supported === true} />
+            <NetworkTest
+              ready={ready}
+              supported={data?.device?.network_test_supported === true}
+              usbSupported={data?.device?.usb_network_supported === true}
+              usbNetwork={data?.usb_network}
+              callBusy={data?.device?.call?.busy === true}
+            />
           </div>
           <div hidden={navigation !== 'call'}>
             <CallPanel

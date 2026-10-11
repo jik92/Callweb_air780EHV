@@ -22,6 +22,7 @@ export interface Snapshot {
     version: string
     network_test_supported?: boolean
     location_supported?: boolean
+    usb_network_supported?: boolean
     call?: { ready: boolean; audio_ready: boolean; busy: boolean; live_supported?: boolean }
     mobile: {
       sim_ready: boolean
@@ -44,6 +45,14 @@ export interface Snapshot {
   } | null
   messages: Sms[]
   location?: DeviceLocation
+  usb_network?: UsbNetworkState
+}
+
+export interface UsbNetworkState {
+  state: 'idle' | 'switching' | 'configured' | 'failed' | 'unknown'
+  enabled: boolean
+  mode: 'ecm' | 'rndis'
+  error?: string | null
 }
 
 export interface DeviceLocation {

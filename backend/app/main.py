@@ -25,6 +25,7 @@ from .network_test import NetworkTestRequest, probe
 from .recording import mix
 from .serial_bridge import SerialBridge, available_ports
 from .store import Store
+from .usb_network import UsbNetwork, UsbNetworkRequest
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = Path(os.getenv("AIR780_DATA_DIR", str(ROOT.parent / "data")))
@@ -69,6 +70,7 @@ class Service:
         self.last_seen = None
         self.network_waiter = None
         self.location = Location(self)
+        self.usb_network = UsbNetwork(self)
         self.agent_settings = AgentSettings(store.recordings.parent / "agent")
         self.calls = Calls(self)
         self.dingtalk_settings = DingTalkSettings(store.recordings.parent / "dingtalk")
@@ -94,6 +96,7 @@ class Service:
             "device": device,
             "messages": self.store.list(),
             "location": self.location.state,
+            "usb_network": self.usb_network.state,
         }
 
     def broadcast(self):
@@ -128,6 +131,7 @@ class Service:
             if kind == "call_pcm":
                 continue
             self.location.consume(event)
+            self.usb_network.consume(event)
             sim_id = (self.device or {}).get("mobile", {}).get("iccid", "")
             if kind == "transport":
                 self.connection.update(
@@ -354,6 +358,13 @@ async def location_refresh(request: Request):
     if request.headers.get("origin") not in ALLOWED_ORIGINS:
         raise HTTPException(403, "不允许的请求来源")
     return await app.state.service.location.refresh()
+
+
+@app.post("/api/usb-network")
+async def usb_network(request: Request, config: UsbNetworkRequest):
+    if request.headers.get("origin") not in ALLOWED_ORIGINS:
+        raise HTTPException(403, "不允许的请求来源")
+    return await app.state.service.usb_network.configure(config)
 
 
 @app.get("/api/calls")

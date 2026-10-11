@@ -15,6 +15,7 @@ def make_service():
         device={"location_supported": True, "call": {}},
         calls=SimpleNamespace(active=lambda: False),
         network_waiter=None,
+        usb_network=SimpleNamespace(waiter=None, state={"state": "idle"}),
         bridge=SimpleNamespace(send=commands.append),
         broadcast=lambda: None,
     )

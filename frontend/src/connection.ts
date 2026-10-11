@@ -234,3 +234,15 @@ export async function refreshDeviceLocation(): Promise<void> {
   const data = await response.json()
   if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : '位置更新失败')
 }
+
+export async function configureUsbNetwork(enabled: boolean, mode: 'ecm' | 'rndis') {
+  const response = await fetch('/api/usb-network', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled, mode }),
+  })
+  const data = await response.json()
+  if (!response.ok)
+    throw new Error(typeof data.detail === 'string' ? data.detail : 'USB 网卡配置失败')
+  return data
+}

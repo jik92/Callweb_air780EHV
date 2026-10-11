@@ -290,3 +290,11 @@ Agent仅进行语音回复，不授予工具或业务执行权限。
 定位会向合宙服务发送设备 IMEI 和当前基站信息；本机 API 将返回坐标交给 OpenStreetMap Nominatim 解析省、市、区县，地址不可用时保留坐标。界面标注来源、定位时间和失败原因，USB 重连会清除旧结果。地址缓存 24 小时（服务进程内），请求间隔至少 1.1 秒；不保存位置历史。可通过 `AIR780_GEOCODER_URL` 指向兼容 Nominatim 的自建服务。公共服务遵循 https://operations.osmfoundation.org/policies/nominatim/ ，规模化部署应使用自建服务或合适的地图服务商。
 
 定位库 `lua/lbsLoc2.lua` 来源：官方 LuatOS `script/libs/lbsLoc2.lua`（202607021200）。
+
+### USB 网卡共享 4G
+
+「网络测试」新增 USB 网卡开关，设备脚本 `001.999.016` 起支持。macOS/Linux 选 ECM，Windows/Linux 选 RNDIS；均使用 NAT，将 SIM 卡的 4G 网络提供给 USB 连接的电脑。电脑需要识别网卡并获取 DHCP 地址。页面显示的是设备配置结果，不代表电脑已联网。
+
+仅手动开启，上电默认关闭；关闭后重新枚举 USB。切换会短暂进出飞行模式、重新注册网络并断开 USB，通话、短信发送、定位或设备网络测试进行中禁止切换；断线及超时不自动重放配置命令。模式需要先关闭再切换。如果 USB 应用串口未恢复，松开所有按键后拔插 USB 正常上电，恢复默认串口模式。不要在网卡模式下操作 BOOT，除非准备烧录。
+
+电脑是否优先使用 4G，由系统网络服务顺序决定；控制台不会关闭 Wi-Fi 或修改其他网卡的路由。官方文档：https://docs.openluat.com/air780ehv/luatos/app/common/rndis/ 。

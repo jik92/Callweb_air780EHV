@@ -2,13 +2,33 @@ import { useMutation } from '@tanstack/react-query'
 import { Alert, Button, Form, Input, Tag } from 'antd'
 import { GlobalOutlined } from '@ant-design/icons'
 import { testDeviceNetwork } from './connection'
+import UsbNetworkControls from './UsbNetworkControls'
+import type { UsbNetworkState } from './types'
 
-export default function NetworkTest({ ready, supported }: { ready: boolean; supported: boolean }) {
+export default function NetworkTest({
+  ready,
+  supported,
+  usbSupported,
+  usbNetwork,
+  callBusy,
+}: {
+  ready: boolean
+  supported: boolean
+  usbSupported: boolean
+  usbNetwork?: UsbNetworkState
+  callBusy: boolean
+}) {
   const test = useMutation({ mutationFn: testDeviceNetwork })
   const result = test.data
   return (
     <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-6 max-[740px]:p-4">
       <h2 className="mt-0 text-lg font-semibold">网络测试</h2>
+      <UsbNetworkControls
+        ready={ready}
+        supported={usbSupported}
+        state={usbNetwork}
+        callBusy={callBusy}
+      />
       <p className="text-sm leading-6 text-slate-500">
         使用设备 SIM 卡的 4G 网络发送 GET 请求，检查连接和响应。请求前 1024
         字节，响应正文不展示，测试后清理。

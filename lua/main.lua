@@ -1,10 +1,11 @@
 PROJECT = "air780ehv_sim_query"
-VERSION = "001.999.014"
+VERSION = "001.999.016"
 
 sys = require("sys")
 local call_player = require("call_player")
 local network_test = require("network_test")
 local location = require("location")
+local usb_network = require("usb_network")
 local uartid = uart.VUART_0
 local buffer = ""
 local sms_ready = false
@@ -42,6 +43,8 @@ local function status()
         version = VERSION,
         network_test_supported = true,
         location_supported = true,
+        usb_network_supported = true,
+        usb_network = usb_network.status(),
         call = call_player.status(),
         mobile = {
             sim_ready = ready,
@@ -160,6 +163,8 @@ uart.on(uartid, "receive", function(id, len)
                 network_test.start(command, reply, call_player.status())
             elseif command.action == "locate" then
                 location.start(command, reply, call_player.status())
+            elseif command.action == "usb_network" then
+                usb_network.start(command, reply, call_player.status())
             elseif command.action == "send_sms" then send_sms(command)
             elseif command.action == "call_play" then call_player.start(command)
             elseif command.action == "call_live" then call_player.live(command)

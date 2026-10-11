@@ -86,6 +86,8 @@ class Location:
             raise HTTPException(409, "请结束通话后更新位置")
         if self.waiter or service.network_waiter:
             raise HTTPException(409, "请等待当前设备网络请求完成")
+        if service.usb_network.waiter or service.usb_network.state["state"] == "switching":
+            raise HTTPException(409, "请等待 USB 网卡切换完成")
         request_id = str(uuid4())
         future = asyncio.get_running_loop().create_future()
         self.waiter = (request_id, future)
