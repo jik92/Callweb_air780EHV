@@ -41,10 +41,11 @@ class PcmCapture extends AudioWorkletProcessor {
         if (!this.tone && this.tones.length) this.tone = { ...this.tones.shift(), at: 0 }
         if (this.tone) {
           const { low, high, at } = this.tone
-          const duration = Math.round(this.rate * 0.16)
+          // Keep the pair steady across several speech-codec frames for IVR detection.
+          const duration = Math.round(this.rate * 0.4)
           const ramp = this.rate * 0.005
           const envelope = Math.max(0, Math.min(1, at / ramp, (duration - at) / ramp))
-          // Replace microphone speech during the digit and 80ms gap, even when muted.
+          // Replace microphone speech during the digit and 160ms gap, even when muted.
           value =
             at < duration
               ? 0.25 *
@@ -53,7 +54,7 @@ class PcmCapture extends AudioWorkletProcessor {
                   Math.sin((2 * Math.PI * high * at) / this.rate))
               : 0
           this.tone.at++
-          if (this.tone.at >= Math.round(this.rate * 0.24)) this.tone = null
+          if (this.tone.at >= Math.round(this.rate * 0.56)) this.tone = null
         }
         this.samples.push(Math.round(value * (value < 0 ? 32768 : 32767)))
         this.sum = 0
