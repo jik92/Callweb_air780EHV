@@ -167,3 +167,42 @@ export function saveAgentSettings(data: {
 export function testAgentConnection(): Promise<{ message: string }> {
   return agentRequest('/api/agent/test', { method: 'POST' })
 }
+
+export type DingTalkConfig = {
+  enabled: boolean
+  has_webhook: boolean
+  has_secret: boolean
+  ready: boolean
+  deliveries: {
+    message_id: string
+    state: string
+    error: string | null
+    updated_at: number
+  }[]
+}
+export const dingtalkSettingsKey = ['dingtalk-settings']
+async function dingtalkRequest(path: string, init?: RequestInit) {
+  const response = await fetch(path, init)
+  const data = await response.json()
+  if (!response.ok)
+    throw new Error(typeof data.detail === 'string' ? data.detail : '钉钉推送配置请求失败')
+  return data
+}
+export function getDingTalkSettings(): Promise<DingTalkConfig> {
+  return dingtalkRequest('/api/dingtalk')
+}
+export function saveDingTalkSettings(data: {
+  enabled: boolean
+  webhook?: string
+  secret?: string
+  clear_credentials?: boolean
+}): Promise<DingTalkConfig> {
+  return dingtalkRequest('/api/dingtalk', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+export function testDingTalkPush(): Promise<{ message: string }> {
+  return dingtalkRequest('/api/dingtalk/test', { method: 'POST' })
+}

@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from .agent_settings import AgentSettings, AgentUpdate
 from .calls import Calls
+from .dingtalk import DingTalkNotifier, DingTalkSettings, DingTalkUpdate, send_notification
 from .recording import mix
 from .serial_bridge import SerialBridge, available_ports
 from .store import Store
@@ -66,6 +67,8 @@ class Service:
         self.last_seen = None
         self.agent_settings = AgentSettings(store.recordings.parent / "agent")
         self.calls = Calls(self)
+        self.dingtalk_settings = DingTalkSettings(store.recordings.parent / "dingtalk")
+        self.dingtalk = DingTalkNotifier(store, self.dingtalk_settings)
 
     def snapshot(self):
         device = self.device
@@ -134,7 +137,7 @@ class Service:
                     if isinstance(message, dict):
                         self.store.incoming(message, sim_id)
             elif kind == "incoming_sms":
-                self.store.incoming(event, sim_id)
+                self.dingtalk.enqueue(self.store.incoming(event, sim_id))
             elif kind in ("command_written", "sms_send_accepted"):
                 if event.get("request_id"):
                     row = self.store.get(event["request_id"])
@@ -215,11 +218,15 @@ async def lifespan(app: FastAPI):
         lambda event: loop.call_soon_threadsafe(service.events.put_nowait, event),
     )
     consumer = asyncio.create_task(service.consume())
+    notifier = asyncio.create_task(service.dingtalk.run())
     service.bridge.start()
     try:
         yield
     finally:
         await asyncio.to_thread(service.bridge.close)
+        notifier.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await notifier
         consumer.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await consumer
@@ -277,6 +284,44 @@ async def test_agent_settings(request: Request):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from None
     return {"ok": True, "message": "Realtime 连接和场景配置验证成功，未接听或拨打电话"}
+
+
+@app.get("/api/dingtalk")
+async def dingtalk_settings():
+    service = app.state.service
+    return {**service.dingtalk_settings.snapshot(), "deliveries": service.store.push_list()}
+
+
+@app.put("/api/dingtalk")
+async def save_dingtalk_settings(request: Request, update: DingTalkUpdate):
+    if request.headers.get("origin") not in ALLOWED_ORIGINS:
+        raise HTTPException(403, "不允许的请求来源")
+    service = app.state.service
+    try:
+        data = service.dingtalk_settings.save(update)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return {**data, "deliveries": service.store.push_list()}
+
+
+@app.post("/api/dingtalk/test")
+async def test_dingtalk_settings(request: Request):
+    if request.headers.get("origin") not in ALLOWED_ORIGINS:
+        raise HTTPException(403, "不允许的请求来源")
+    service = app.state.service
+    if getattr(service, "dingtalk_test_at", 0) > time.monotonic() - 10:
+        raise HTTPException(429, "请等待 10 秒后再测试")
+    try:
+        config = service.dingtalk_settings.config(test=True)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    service.dingtalk_test_at = time.monotonic()
+    state, error = await send_notification(
+        config, "智能语音客服 · 短信钉钉推送测试\nWebhook 与加签连接测试；此消息不包含真实短信。"
+    )
+    if state != "sent":
+        raise HTTPException(502, error)
+    return {"ok": True, "message": "钉钉已接受测试推送，请在群内查看"}
 
 
 @app.get("/api/call")

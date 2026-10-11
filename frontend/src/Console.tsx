@@ -20,6 +20,7 @@ import {
 } from 'antd'
 import type { MenuProps } from 'antd'
 import {
+  BellOutlined,
   ArrowDownOutlined,
   ArrowUpOutlined,
   CheckCircleOutlined,
@@ -37,6 +38,7 @@ import {
 import { APP_NAME } from './constants'
 import CallPanel from './CallPanel'
 import AgentSettings from './AgentSettings'
+import DingTalkSettings from './DingTalkSettings'
 import { connection, stateKey } from './connection'
 import type { Sms, Snapshot } from './types'
 
@@ -52,13 +54,22 @@ const menuItems: MenuProps['items'] = [
       { key: 'agent', label: 'AGENT设置', icon: <RobotOutlined /> },
     ],
   },
-  { key: 'sms', label: '短信管理', icon: <MessageOutlined /> },
+  {
+    key: 'sms-group',
+    label: '短信管理',
+    icon: <MessageOutlined />,
+    children: [
+      { key: 'sms', label: '短信收发', icon: <MessageOutlined /> },
+      { key: 'dingtalk', label: '钉钉推送', icon: <BellOutlined /> },
+    ],
+  },
 ]
 const navigationLabels: Record<string, string> = {
   overview: '设备总览',
   call: '实时通话',
   sms: '短信管理',
   agent: 'AGENT设置',
+  dingtalk: '钉钉推送',
 }
 
 const signalHeights = [
@@ -227,7 +238,7 @@ export default function Console() {
         <Menu
           theme="dark"
           selectedKeys={[navigation]}
-          defaultOpenKeys={['call-group']}
+          defaultOpenKeys={['call-group', 'sms-group']}
           mode="inline"
           items={menuItems}
           onClick={navigateMenu}
@@ -273,6 +284,9 @@ export default function Console() {
               ready={ready}
               onAnswer={() => setNavigation('call')}
             />
+          </div>
+          <div hidden={navigation !== 'dingtalk'}>
+            <DingTalkSettings visible={navigation === 'dingtalk'} />
           </div>
           <div hidden={navigation !== 'agent'}>
             <AgentSettings />

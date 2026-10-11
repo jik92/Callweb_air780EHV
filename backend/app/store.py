@@ -34,6 +34,15 @@ class Store:
         )
         self.conn.commit()
         self.mark_unknown("service_restarted")
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS sms_pushes (
+            message_id TEXT PRIMARY KEY, state TEXT NOT NULL,
+            error TEXT, updated_at REAL NOT NULL)""")
+        self.conn.execute(
+            "UPDATE sms_pushes SET state='unknown',error='服务重启，未自动重试',updated_at=? "
+            "WHERE state IN ('pending','sending')",
+            (time.time(),),
+        )
+        self.conn.commit()
 
     def sim_number(self, sim_id):
         row = self.conn.execute(
@@ -115,11 +124,12 @@ class Store:
         timestamp = message.get("received_at") or time.time()
         identity = json.dumps([sim_id, phone, content, timestamp], ensure_ascii=False)
         key = "rx-" + hashlib.sha256(identity.encode()).hexdigest()
-        self.conn.execute(
+        cursor = self.conn.execute(
             "INSERT OR IGNORE INTO messages VALUES (?, 'incoming', ?, ?, ?, 'received', NULL, ?)",
             (key, phone, content, timestamp, sim_id),
         )
         self.conn.commit()
+        return self.get(key) if cursor.rowcount else None
 
     def prepare(self, request_id: str, phone: str, content: str, sim_id: str) -> dict:
         self.conn.execute(
@@ -150,6 +160,30 @@ class Store:
             (time.time() - 90,),
         )
         self.conn.commit()
+
+    def push_claim(self, message_id):
+        cursor = self.conn.execute(
+            "INSERT OR IGNORE INTO sms_pushes VALUES (?, 'pending', NULL, ?)",
+            (message_id, time.time()),
+        )
+        self.conn.commit()
+        return bool(cursor.rowcount)
+
+    def push_update(self, message_id, state, error=None):
+        self.conn.execute(
+            "UPDATE sms_pushes SET state=?,error=?,updated_at=? WHERE message_id=?",
+            (state, error, time.time(), message_id),
+        )
+        self.conn.commit()
+
+    def push_list(self):
+        return [
+            dict(row)
+            for row in self.conn.execute(
+                "SELECT message_id,state,error,updated_at FROM sms_pushes "
+                "ORDER BY updated_at DESC LIMIT 20"
+            )
+        ]
 
     def close(self):
         self.conn.close()

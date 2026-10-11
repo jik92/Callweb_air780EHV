@@ -268,3 +268,11 @@ Agent仅进行语音回复，不授予工具或业务执行权限。
 
 接口与协议参考：[AiHubMix Realtime示例](https://aihubmix.com/model/gpt-realtime-2.1)、
 [OpenAI Realtime WebSocket](https://developers.openai.com/api/docs/guides/voice-websockets?voice-api=realtime)。
+
+### 短信钉钉推送
+
+在「短信管理 → 钉钉推送」配置自定义机器人 Webhook 和 SEC 加签密钥，保存后可开关推送、发送固定测试消息以及查看最近 20 条推送状态。测试使用已保存配置，可以在自动推送关闭时执行。
+
+启用后仅推送新收到的短信，包含发送号码、接收时间和短信内容；历史收件箱同步和发件短信不推送。后台异步限速处理，不阻塞短信与通话。SQLite 保存推送去重状态，相同短信不重复推送；失败、超时及重启后未知结果不自动重试。
+
+凭据仅保存在忽略目录 `data/dingtalk/settings.json`（目录 700、文件 600），页面仅显示是否已配置，不回传密钥。Webhook 固定允许钉钉官方 HTTPS 机器人地址；写入和测试接口检查本机页面 Origin。无需修改或烧录设备脚本。

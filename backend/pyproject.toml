@@ -10,10 +10,11 @@ dependencies = [
     "websockets>=15,<17",
     "numpy>=2,<3",
     "soxr>=0.5,<1",
+    "httpx>=0.28,<1",
 ]
 
 [dependency-groups]
-dev = ["ruff>=0.12", "pytest>=8", "httpx>=0.28"]
+dev = ["ruff>=0.12", "pytest>=8", "httpx>=0.28,<1"]
 
 [tool.ruff]
 target-version = "py312"
