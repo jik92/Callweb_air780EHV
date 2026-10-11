@@ -1,7 +1,7 @@
 [project]
 name = "air780ehv_sim_query"
 chip = "ec7xx"
-version = "001.999.007"
+version = "001.999.008"
 
 [build]
 script_dirs = ["lua/"]

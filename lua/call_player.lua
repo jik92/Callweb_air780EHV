@@ -3,10 +3,21 @@ local M = {}
 local exaudio = require("exaudio")
 local ready, audio_ready = false, false
 local active, last_id, last_result
-local emit
-local up = {zbuff.create(48000,0), zbuff.create(48000,0)}
-local down = {zbuff.create(48000,0), zbuff.create(48000,0)}
+local emit, emit_pcm
+local rx_queue, tx_queue = {}, {}
+local rx_sequence = 0
+local up = {zbuff.create(1280,0), zbuff.create(1280,0)}
+local down = {zbuff.create(1280,0), zbuff.create(1280,0)}
 local function capture(buff)
+    if active and active.live and active.connected and buff:used() > 0 then
+        local raw = buff:query()
+        buff:del()
+        active.down_sequence = (active.down_sequence or 0) + 1
+        if #tx_queue >= 6 then table.remove(tx_queue, 1) end
+        tx_queue[#tx_queue+1] = {id=active.request_id, raw=raw,
+            rate=cc.quality() == 2 and 16000 or 8000, sequence=active.down_sequence}
+        return
+    end
     if active and active.connected and active.recording and buff:used() > 0 then
         local quality = cc.quality()
         if quality ~= 0 then active.sample_rate = quality == 2 and 16000 or 8000 end
@@ -35,9 +46,12 @@ local function finish(reason)
     local ended = active
     last_result = {type="call_result", request_id=ended.request_id, to=ended.to,
         connected=ended.connected == true, played=ended.played == true, reason=reason,
-        recording_overflow=ended.recording_overflow == true}
+        recording_overflow=ended.recording_overflow == true,
+        up_bytes=ended.up_bytes or 0, dropped_bytes=ended.dropped_bytes or 0}
     local result = last_result
     active = nil
+    rx_queue, tx_queue = {}, {}
+    cc.extern_source(nil)
     exaudio.pm(exaudio.SHUTDOWN)
     sys.taskInit(function()
         if ended.recording then
@@ -59,6 +73,21 @@ end
 local function play()
     if not active or active.started or not active.connected or not active.audio then return end
     active.started = true
+    if active.live then
+        local rate = cc.quality() == 2 and 16000 or 8000
+        cc.extern_source(nil)
+        local ok, result = pcall(cc.extern_source, true, true,
+            audio_v2.DATA_CODEC_TYPE_RAW, true, rate, 16, 1, true)
+        if ok and result then
+            active.last_input = os.time()
+            event("stream_started", {sample_rate=rate})
+        else
+            active.reason = "stream_start_failed"
+            event("stream_failed", {error=tostring(result)})
+            cc.hangUp(0)
+        end
+        return
+    end
     local id = active.request_id
     sys.timerStart(function()
         if not active or active.request_id ~= id then return end
@@ -73,8 +102,8 @@ local function play()
         end
     end, 1200)
 end
-function M.init(reply)
-    emit = reply
+function M.init(reply, audio_reply)
+    emit, emit_pcm = reply, audio_reply
     sys.subscribe("CC_IND", function(state)
         log.info("call_player", state)
         if state == "READY" then ready = true; sys.publish("CALL_READY") end
@@ -86,7 +115,7 @@ function M.init(reply)
         elseif state == "AUDIO_START" then
             active.audio = true
             play()
-        elseif state == "EXT_SRC_DONE" and active.started then
+        elseif state == "EXT_SRC_DONE" and active.started and not active.live then
             active.played = true
             active.reason = "play_completed"
             local id = active.request_id
@@ -113,7 +142,54 @@ function M.init(reply)
         log.info("call_player", "initialized", ready, audio_ready)
     end)
 end
-function M.status() return {ready=ready, audio_ready=audio_ready, busy=active ~= nil} end
+    -- Bound both queues; never do JSON/hex conversion in the audio callback.
+
+function M.status()
+    return {ready=ready, audio_ready=audio_ready, busy=active ~= nil,
+        live_supported=type(cc.input) == "function", request_id=active and active.request_id,
+        up_bytes=active and active.up_bytes or 0, dropped_bytes=active and active.dropped_bytes or 0}
+end
+function M.input(id, sequence, raw)
+    if not active or not active.live or not active.started or active.request_id ~= id
+        or sequence <= rx_sequence or #raw % 2 ~= 0 or #raw > 1280 then return end
+    rx_sequence = sequence
+    active.last_input = os.time()
+    if #rx_queue >= 6 then
+        local dropped = table.remove(rx_queue, 1)
+        active.dropped_bytes = (active.dropped_bytes or 0) + #dropped
+    end
+    rx_queue[#rx_queue+1] = raw
+end
+function M.hangup(id)
+    if active and active.request_id == id then
+        active.reason = "user_hangup"
+        cc.hangUp(0)
+    end
+end
+sys.taskInit(function()
+    while true do
+        if active and active.live and active.started then
+            if active.last_input and os.time() - active.last_input > 5 then
+                active.reason = "audio_timeout"
+                cc.hangUp(0)
+            end
+            local raw = rx_queue[1]
+            if raw then
+                local ok, written = cc.input(true, raw, false)
+                if ok and written and written > 0 then
+                    active.up_bytes = (active.up_bytes or 0) + written
+                    if written >= #raw then table.remove(rx_queue, 1)
+                    else rx_queue[1] = raw:sub(written + 1) end
+                end
+            end
+        end
+        local frame = table.remove(tx_queue, 1)
+        if frame and active and active.request_id == frame.id and emit_pcm then
+            emit_pcm(frame.id, frame.sequence, frame.rate, frame.raw)
+        end
+        sys.wait(10)
+    end
+end)
 function M.start(command)
     if type(command.request_id) ~= "string" or command.request_id == "" then return end
     if command.request_id == last_id then
@@ -125,7 +201,7 @@ function M.start(command)
         return
     end
     if type(command.to) ~= "string" or not command.to:match("^%+?%d+$")
-        or type(command.content) ~= "string" or #command.content == 0 or #command.content > 512 then
+        or (not command.live and (type(command.content) ~= "string" or #command.content == 0 or #command.content > 512)) then
         emit({type="call_result",request_id=command.request_id,reason="invalid_input"})
         return
     end
@@ -137,6 +213,7 @@ function M.start(command)
         end
     end
     for i=1,2 do up[i]:del(); down[i]:del() end
+    rx_queue, tx_queue, rx_sequence = {}, {}, -1
     active = command
     if command.listen_seconds then active.recording = zbuff.create(2048000,0,zbuff.HEAP_AUTO) end
     last_id = command.request_id
@@ -155,5 +232,9 @@ function M.start(command)
     end, 90000)
     local ok, result = pcall(cc.dial, 0, command.to)
     if not ok or result == false then finish("dial_failed") end
+end
+function M.live(command)
+    command.live = true
+    M.start(command)
 end
 return M

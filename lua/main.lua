@@ -1,5 +1,5 @@
 PROJECT = "air780ehv_sim_query"
-VERSION = "001.999.007"
+VERSION = "001.999.008"
 
 sys = require("sys")
 local call_player = require("call_player")
@@ -63,7 +63,11 @@ local function reply(data)
     uart.write(uartid, "SMS_START:" .. json.encode(data) .. ":SMS_END\r\n")
 end
 
-call_player.init(reply)
+local function audio_reply(id, sequence, rate, pcm)
+    uart.write(uartid, "AUD_START:" .. id .. string.pack("<I2I2I4", #pcm, rate, sequence)
+        .. pcm .. ":AUD_END")
+end
+call_player.init(reply, audio_reply)
 
 local function send_status()
     reply(status())
@@ -123,8 +127,24 @@ end
 uart.on(uartid, "receive", function(id, len)
     buffer = buffer .. uart.read(id, len)
     while true do
-        local first = buffer:find("CMD_START:", 1, true)
-        if not first then buffer = buffer:sub(-9); break end
+        local command_start = buffer:find("CMD_START:", 1, true)
+        local pcm_start = buffer:find("PCM_START:", 1, true)
+        if not command_start and not pcm_start then buffer = buffer:sub(-9); break end
+        if pcm_start and (not command_start or pcm_start < command_start) then
+            buffer = buffer:sub(pcm_start)
+            if #buffer < 52 then break end
+            local length, sequence = string.unpack("<I2I4", buffer, 47)
+            if length > 1280 or length % 2 ~= 0 then
+                buffer = buffer:sub(11)
+            elseif #buffer < 60 + length then break
+            elseif buffer:sub(53 + length, 60 + length) ~= ":PCM_END" then
+                buffer = buffer:sub(11)
+            else
+                call_player.input(buffer:sub(11,46), sequence, buffer:sub(53,52+length))
+                buffer = buffer:sub(61+length)
+            end
+        else
+        local first = command_start
         local last = buffer:find(":CMD_END", first + 10, true)
         if not last then buffer = buffer:sub(first); break end
         local payload = buffer:sub(first + 10, last - 1)
@@ -133,7 +153,9 @@ uart.on(uartid, "receive", function(id, len)
         if ok and type(command) == "table" then
             if command.action == "get_status" then send_status()
             elseif command.action == "send_sms" then send_sms(command)
-            elseif command.action == "call_play" then call_player.start(command) end
+            elseif command.action == "call_play" then call_player.start(command)
+            elseif command.action == "call_live" then call_player.live(command)
+            elseif command.action == "call_hangup" then call_player.hangup(command.request_id) end
             if command.action == "restore_inbox" and type(command.messages) == "table"
                 and #command.messages <= 20 and #inbox == 0 then
                 local valid = true
@@ -156,7 +178,8 @@ uart.on(uartid, "receive", function(id, len)
             end
         end
     end
-    if #buffer > 4096 then buffer = "" end
+        end
+    if #buffer > 16384 then buffer = "" end
 end)
 
 sys.taskInit(function()

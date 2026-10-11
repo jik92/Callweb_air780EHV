@@ -20,6 +20,7 @@ export interface Snapshot {
   device: {
     project: string
     version: string
+    call?: { ready: boolean; audio_ready: boolean; busy: boolean; live_supported?: boolean }
     mobile: {
       sim_ready: boolean
       sms_ready: boolean

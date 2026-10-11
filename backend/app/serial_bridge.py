@@ -24,6 +24,7 @@ class SerialBridge:
         self.port = port
         self.emit = emit
         self.commands = queue.Queue(maxsize=32)
+        self.audio = queue.Queue(maxsize=6)
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self.run, name="air780-serial", daemon=True)
 
@@ -36,6 +37,17 @@ class SerialBridge:
 
     def send(self, command: dict):
         self.commands.put_nowait(command)
+
+    def send_audio(self, frame: bytes):
+        dropped = False
+        if self.audio.full():
+            try:
+                self.audio.get_nowait()
+                dropped = True
+            except queue.Empty:
+                pass
+        self.audio.put_nowait(frame)
+        return dropped
 
     def discover(self) -> str | None:
         if self.port:
@@ -58,7 +70,7 @@ class SerialBridge:
                 continue
             try:
                 with serial.Serial(
-                    port, 115200, timeout=0.1, write_timeout=2, exclusive=True
+                    port, 115200, timeout=0.01, write_timeout=2, exclusive=True
                 ) as conn:
                     parser = FrameParser()
                     self.emit({"type": "transport", "connected": True, "port": port})
@@ -78,6 +90,11 @@ class SerialBridge:
                             self.emit(
                                 {"type": "command_written", "request_id": command.get("request_id")}
                             )
+                        for _ in range(4):
+                            try:
+                                conn.write(self.audio.get_nowait())
+                            except queue.Empty:
+                                break
                         now = time.monotonic()
                         if now >= next_status:
                             conn.write(encode_command({"action": "get_status"}))
@@ -96,6 +113,8 @@ class SerialBridge:
                         self.commands.get_nowait()
                     except queue.Empty:
                         break
+                while not self.audio.empty():
+                    self.audio.get_nowait()
                 self.emit(
                     {"type": "transport", "connected": False, "port": port, "error": str(exc)}
                 )

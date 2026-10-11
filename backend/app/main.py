@@ -5,16 +5,19 @@ import json
 import os
 import queue
 import time
+import wave
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from .calls import Calls
+from .recording import mix
 from .serial_bridge import SerialBridge, available_ports
 from .store import Store
 
@@ -56,6 +59,7 @@ class Service:
         self.events = asyncio.Queue()
         self.bridge = None
         self.last_seen = None
+        self.calls = Calls(self)
 
     def snapshot(self):
         return {
@@ -73,14 +77,22 @@ class Service:
             client.put_nowait(snapshot)
 
     async def consume(self):
+        tick_at = time.monotonic()
         while True:
+            if time.monotonic() - tick_at >= 1:
+                self.calls.tick()
+                tick_at = time.monotonic()
             try:
                 event = await asyncio.wait_for(self.events.get(), timeout=5)
             except TimeoutError:
+                self.calls.tick()
                 self.store.expire()
                 self.broadcast()
                 continue
+            self.calls.event(event)
             kind = event.get("type")
+            if kind == "call_pcm":
+                continue
             sim_id = (self.device or {}).get("mobile", {}).get("iccid", "")
             if kind == "transport":
                 self.connection.update(
@@ -177,6 +189,7 @@ async def lifespan(app: FastAPI):
         consumer.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await consumer
+        service.calls.close()
         store.close()
         lock.close()
 
@@ -187,6 +200,40 @@ app = FastAPI(title="Air780EHV 本地控制台", lifespan=lifespan)
 @app.get("/api/state")
 async def state():
     return app.state.service.snapshot()
+
+
+@app.get("/api/call")
+async def call_state():
+    return app.state.service.calls.state
+
+
+@app.get("/api/calls")
+async def call_history():
+    return app.state.service.store.call_list()
+
+
+recording_lock = asyncio.Lock()
+
+
+@app.get("/api/calls/{call_id}/recording")
+async def call_recording(call_id: UUID):
+    store = app.state.service.store
+    row = store.call_get(str(call_id))
+    if not row or row["state"] not in ("ended", "failed", "unknown"):
+        raise HTTPException(404, "录音尚不可用")
+    async with recording_lock:
+        try:
+            path = await asyncio.to_thread(mix, store.recordings / str(call_id))
+        except (OSError, ValueError, wave.Error, EOFError) as exc:
+            raise HTTPException(404, "录音文件不可用") from exc
+    if not path:
+        raise HTTPException(404, "这次拨号没有录音")
+    return FileResponse(
+        path,
+        media_type="audio/wav",
+        filename=f"call-{call_id}.wav",
+        content_disposition_type="inline",
+    )
 
 
 @app.get("/api/ports")
@@ -236,6 +283,14 @@ async def websocket_endpoint(ws: WebSocket):
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
             await task
+
+
+@app.websocket("/ws/call")
+async def call_socket(ws: WebSocket):
+    if ws.headers.get("origin") not in ALLOWED_ORIGINS:
+        await ws.close(code=1008)
+        return
+    await app.state.service.calls.socket(ws)
 
 
 if FRONTEND.exists():

@@ -9,6 +9,7 @@ from pathlib import Path
 
 class Store:
     def __init__(self, path: Path):
+        self.recordings = path.parent / "calls"
         path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
@@ -18,7 +19,62 @@ class Store:
             content TEXT NOT NULL, timestamp REAL NOT NULL, state TEXT NOT NULL,
             error TEXT, sim_id TEXT NOT NULL DEFAULT '')""")
         self.conn.commit()
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS calls (
+            id TEXT PRIMARY KEY, phone TEXT NOT NULL, started_at REAL NOT NULL,
+            connected_at REAL, ended_at REAL, state TEXT NOT NULL,
+            reason TEXT, sample_rate INTEGER, recording_error TEXT)""")
+        self.conn.execute(
+            "UPDATE calls SET state='unknown',reason='service_restarted',ended_at=? "
+            "WHERE state IN ('dialing','connected','streaming','hanging_up')",
+            (time.time(),),
+        )
+        self.conn.commit()
         self.mark_unknown("service_restarted")
+
+    def call_get(self, call_id):
+        row = self.conn.execute("SELECT * FROM calls WHERE id=?", (call_id,)).fetchone()
+        return dict(row) if row else None
+
+    def call_prepare(self, call_id, phone):
+        self.conn.execute(
+            "INSERT INTO calls (id,phone,started_at,state) VALUES (?,?,?,'dialing')",
+            (call_id, phone, time.time()),
+        )
+        self.conn.commit()
+
+    def call_update(self, state):
+        self.conn.execute(
+            "UPDATE calls SET state=?,reason=?,connected_at=COALESCE(connected_at,?),"
+            "ended_at=?,sample_rate=?,recording_error=? WHERE id=?",
+            (
+                state["state"],
+                state.get("reason"),
+                state.get("connected_at"),
+                state.get("ended_at"),
+                state.get("sample_rate"),
+                state.get("recording_error"),
+                state.get("call_id"),
+            ),
+        )
+        self.conn.commit()
+
+    def call_list(self):
+        rows = [
+            dict(row)
+            for row in self.conn.execute("SELECT * FROM calls ORDER BY started_at DESC LIMIT 500")
+        ]
+        for row in rows:
+            directory = self.recordings / row["id"]
+            row["recording_available"] = row["state"] in ("ended", "failed", "unknown") and any(
+                p.exists() and p.stat().st_size > 44
+                for p in (directory / "up.wav", directory / "down.wav")
+            )
+            row["duration"] = (
+                max(0, (row["ended_at"] or time.time()) - row["connected_at"])
+                if row["connected_at"]
+                else 0
+            )
+        return rows
 
     def list(self) -> list[dict]:
         return [

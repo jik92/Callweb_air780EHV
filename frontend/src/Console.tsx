@@ -24,36 +24,28 @@ import {
   CheckCircleOutlined,
   CopyOutlined,
   DashboardOutlined,
-  InboxOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   MessageOutlined,
+  PhoneOutlined,
   ReloadOutlined,
   SendOutlined,
   UsbOutlined,
 } from '@ant-design/icons'
+import CallPanel from './CallPanel'
 import { connection, stateKey } from './connection'
 import type { Sms, Snapshot } from './types'
 
 const { Header, Content, Footer, Sider } = Layout
 const menuItems: MenuProps['items'] = [
   { key: 'overview', label: '设备总览', icon: <DashboardOutlined /> },
-  {
-    key: 'sms',
-    label: '短信管理',
-    icon: <MessageOutlined />,
-    children: [
-      { key: 'all', label: '全部短信', icon: <MessageOutlined /> },
-      { key: 'incoming', label: '收件箱', icon: <InboxOutlined /> },
-      { key: 'outgoing', label: '已发送', icon: <SendOutlined /> },
-    ],
-  },
+  { key: 'call', label: '实时通话', icon: <PhoneOutlined /> },
+  { key: 'sms', label: '短信管理', icon: <MessageOutlined /> },
 ]
 const navigationLabels: Record<string, string> = {
   overview: '设备总览',
-  all: '全部短信',
-  incoming: '收件箱',
-  outgoing: '已发送',
+  call: '实时通话',
+  sms: '短信管理',
 }
 
 const signalHeights = [
@@ -174,12 +166,8 @@ export default function Console() {
   const outgoing = data?.messages.filter((item) => item.direction === 'outgoing').length ?? 0
   const navigateMenu: MenuProps['onClick'] = ({ key }) => {
     setNavigation(key)
-    setFilter(key === 'incoming' ? '收件箱' : key === 'outgoing' ? '已发送' : '全部')
-    setSearch('')
     if (narrow) setCollapsed(true)
-    document
-      .getElementById(key === 'overview' ? 'device-overview' : 'sms-workspace')
-      ?.scrollIntoView({ block: 'start' })
+    window.scrollTo({ top: 0 })
   }
   return (
     <Layout className="min-h-screen! [&_:focus-visible]:outline-2 [&_:focus-visible]:outline-[#1766c2] [&_:focus-visible]:outline-offset-3 motion-reduce:[&_*]:transition-none! motion-reduce:[&_*]:animate-none!">
@@ -207,7 +195,6 @@ export default function Console() {
         <Menu
           theme="dark"
           selectedKeys={[navigation]}
-          defaultOpenKeys={['sms']}
           mode="inline"
           items={menuItems}
           onClick={navigateMenu}
@@ -244,21 +231,18 @@ export default function Console() {
         <Content className="mx-6! max-[740px]:mx-4!">
           <Breadcrumb
             className="my-4!"
-            items={
-              navigation === 'overview'
-                ? [{ title: '控制台' }, { title: '设备总览' }]
-                : [
-                    { title: '控制台' },
-                    { title: '短信管理' },
-                    { title: navigationLabels[navigation] },
-                  ]
-            }
+            items={[{ title: '控制台' }, { title: navigationLabels[navigation] }]}
           />
-          <div
-            id="device-overview"
-            className="grid grid-cols-[300px_minmax(0,1fr)] gap-6 scroll-mt-4 max-[900px]:grid-cols-1 max-[740px]:gap-4"
-          >
-            <aside className="flex min-w-0 flex-col gap-5 max-[740px]:gap-4">
+          {/* Keep the call owner mounted so menu navigation never interrupts audio. */}
+          <div hidden={navigation !== 'call'}>
+            <CallPanel device={data?.device ?? null} ready={ready} />
+          </div>
+          <div className="min-w-0">
+            <aside
+              id="device-overview"
+              hidden={navigation !== 'overview'}
+              className="grid min-w-0 grid-cols-2 gap-6 max-[900px]:grid-cols-1 max-[740px]:gap-4 [&[hidden]]:hidden"
+            >
               <section className="p-6 max-[740px]:p-5 rounded-2xl border border-[#dce5ed] bg-white shadow-[0_3px_14px_#163b5c03]">
                 <div className="mb-2.5 text-xs tracking-[0.08em] text-[#6d8195]">当前设备</div>
                 <div className="flex items-center justify-between [&_h1]:m-0 [&_h1]:text-[28px] [&_h1]:font-[650] [&_h1]:tracking-[-0.6px]">
@@ -343,14 +327,11 @@ export default function Console() {
                   </div>
                 </div>
               </section>
-              <div className="flex items-start gap-[9px] px-[9px] text-xs leading-[1.8] text-[#6d8195] max-[740px]:hidden [&>.anticon]:mt-[5px] [&>.anticon]:text-[#197d68]">
-                <CheckCircleOutlined />
-                <span>短信保存在本机，重新打开页面可继续查看。</span>
-              </div>
             </aside>
             <div
               id="sms-workspace"
-              className="flex min-w-0 scroll-mt-4 flex-col gap-5 max-[740px]:gap-4"
+              hidden={navigation !== 'sms'}
+              className="grid min-w-0 grid-cols-[minmax(0,1.5fr)_minmax(300px,1fr)] items-start gap-6 max-[1000px]:grid-cols-1 max-[740px]:gap-4 [&[hidden]]:hidden"
             >
               <section className="rounded-2xl border border-[#dce5ed] bg-white shadow-[0_3px_14px_#163b5c03] flex min-h-[420px] flex-1 flex-col overflow-hidden [&>.ant-alert]:mx-[26px] [&>.ant-alert]:mt-4">
                 <div className="flex items-center justify-between px-[26px] pt-6 pb-5 max-[740px]:p-5 [&_h2]:m-0 [&_h2]:text-2xl [&_h2]:tracking-[-0.4px] [&_h2>span]:ml-[5px] [&_h2>span]:rounded-md [&_h2>span]:bg-[#edf3fa] [&_h2>span]:px-2 [&_h2>span]:py-[3px] [&_h2>span]:align-middle [&_h2>span]:text-[13px] [&_h2>span]:text-[#1766c2]">
@@ -375,18 +356,7 @@ export default function Console() {
                   <Segmented
                     options={['全部', '收件箱', '已发送']}
                     value={filter}
-                    onChange={(value) => {
-                      setFilter(value)
-                      setNavigation(
-                        value === '收件箱'
-                          ? 'incoming'
-                          : value === '已发送'
-                            ? 'outgoing'
-                            : navigation === 'overview'
-                              ? 'overview'
-                              : 'all',
-                      )
-                    }}
+                    onChange={setFilter}
                   />
                   <Input.Search
                     placeholder="搜索号码或短信内容"
@@ -537,6 +507,10 @@ export default function Console() {
                   </div>
                 </Form>
               </section>
+              <div className="col-span-full flex items-start gap-2 px-2 text-xs leading-6 text-[#6d8195] [&>.anticon]:mt-1.5 [&>.anticon]:text-[#197d68]">
+                <CheckCircleOutlined />
+                <span>短信保存在本机，重新打开页面可继续查看。</span>
+              </div>
             </div>
           </div>
         </Content>

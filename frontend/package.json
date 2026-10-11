@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "format": "prettier --write src scripts vite.config.ts",
-    "check": "node scripts/check-styles.mjs && prettier --check src scripts vite.config.ts"
+    "check": "node scripts/check-styles.mjs && prettier --check src scripts vite.config.ts && node scripts/test-dtmf.mjs && node --experimental-strip-types scripts/test-ringback.mjs"
   },
   "dependencies": {
     "@ant-design/icons": "^6.0.0",
