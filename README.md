@@ -276,3 +276,41 @@ Agent仅进行语音回复，不授予工具或业务执行权限。
 启用后仅推送新收到的短信，包含发送号码、接收时间和短信内容；历史收件箱同步和发件短信不推送。后台异步限速处理，不阻塞短信与通话。SQLite 保存推送去重状态，相同短信不重复推送；失败、超时及重启后未知结果不自动重试。
 
 凭据仅保存在忽略目录 `data/dingtalk/settings.json`（目录 700、文件 600），页面仅显示是否已配置，不回传密钥。Webhook 固定允许钉钉官方 HTTPS 机器人地址；写入和测试接口检查本机页面 Origin。无需修改或烧录设备脚本。
+
+## 多设备网络控制台
+
+「设备管理」默认展示已登录的在线设备，可切换到全部绑定、搜索并选择设备进入总览。
+通话、短信记录、录音、AGENT.md 和钉钉推送设置按设备保存；切换普通菜单保持现有连接，
+通话期间禁止切换设备。原本的本机 USB 数据和设置继续保留。
+
+1. 在「设备管理 → 绑定设备」填写名称和 `wss://你的域名/ws/device`。
+2. 下载一次性提供的 `remote_config.lua`，放入对应设备的 `lua/` 目录并烧录脚本。
+3. 设备通过 4G 联网，使用独立设备 ID 与令牌登录；重启服务后绑定仍然有效。
+
+`remote_config.lua` 包含设备凭据，已加入忽略规则。没有该文件时仍使用 USB 协议。
+配置网络模式后设备通过 WS 接收命令和回传二进制音频，USB 仅用于供电、日志和烧录。
+断线清空命令和音频队列，设备结束活动通话；重连只查询状态和收件箱，不重放拨号或短信。
+
+只管理远程设备的服务无需打开串口：
+
+```sh
+AIR780_ENABLE_LOCAL_SERIAL=0 ./scripts/dev-console.sh start
+```
+
+公网反向代理应只开放 `/ws/device` 和 `/api/device-gateway/health`；
+管理页面及浏览器 `/ws`、`/ws/call` 保持本机访问。
+需要发布管理页面时，另行配置受保护入口，并通过 `AIR780_ALLOWED_ORIGINS`
+设置允许的页面来源（逗号分隔）。当前控制台仍无需用户登录，不宜直接公开全部 API。
+
+本次本机 FRP 联调使用独立服务器服务 `frps-call-test`、控制端口 9700，
+SSH 本机转发 9701，以及私网代理端口 9900 → 本机 9010。
+私有配置放在忽略的 `data/frp/frpc.toml`，FRP 二进制放在 `tools/frp/frpc`：
+
+```sh
+python3 scripts/dev-tunnel.py start
+python3 scripts/dev-tunnel.py status
+python3 scripts/dev-tunnel.py stop
+```
+
+该脚本只按 PID 和启动时间管理自己创建的 SSH/FRP 进程。公网域名的 TLS 证书
+通过独立 HTTP 验证申请，服务器 Certbot 负责续期并更新 Traefik 使用的证书。

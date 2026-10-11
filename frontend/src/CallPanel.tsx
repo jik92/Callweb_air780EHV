@@ -66,16 +66,21 @@ export default function CallPanel({
   device,
   ready,
   onAnswer,
+  onActivity,
 }: {
   device: Snapshot['device']
   ready: boolean
   onAnswer: () => void
+  onActivity: (active: boolean) => void
 }) {
   const { message } = App.useApp()
   const queryClient = useQueryClient()
   const agentSettings = useQuery({ queryKey: agentSettingsKey, queryFn: getAgentSettings })
   const [form] = Form.useForm()
   const [call, setCall] = useState<CallState>({ state: 'idle' })
+  useEffect(() => {
+    onActivity(!terminal.has(call.state))
+  }, [call.state, onActivity])
   const [connected, setConnected] = useState(false)
   const [socketGeneration, setSocketGeneration] = useState(0)
   const [preparing, setPreparing] = useState(false)

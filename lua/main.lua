@@ -1,8 +1,9 @@
 PROJECT = "air780ehv_sim_query"
-VERSION = "001.999.009"
+VERSION = "001.999.010"
 
 sys = require("sys")
 local call_player = require("call_player")
+local remote = require("remote_console")
 local uartid = uart.VUART_0
 local buffer = ""
 local sms_ready = false
@@ -60,12 +61,14 @@ local function status()
 end
 
 local function reply(data)
-    uart.write(uartid, "SMS_START:" .. json.encode(data) .. ":SMS_END\r\n")
+    local frame = "SMS_START:" .. json.encode(data) .. ":SMS_END\r\n"
+    if remote.enabled() then remote.send(frame) else uart.write(uartid, frame) end
 end
 
 local function audio_reply(id, sequence, rate, pcm)
-    uart.write(uartid, "AUD_START:" .. id .. string.pack("<I2I2I4", #pcm, rate, sequence)
-        .. pcm .. ":AUD_END")
+    local frame = "AUD_START:" .. id .. string.pack("<I2I2I4", #pcm, rate, sequence)
+        .. pcm .. ":AUD_END"
+    if remote.enabled() then remote.send(frame, true) else uart.write(uartid, frame) end
 end
 call_player.init(reply, audio_reply)
 
@@ -124,8 +127,8 @@ local function send_sms(command)
     end)
 end
 
-uart.on(uartid, "receive", function(id, len)
-    buffer = buffer .. uart.read(id, len)
+local function receive(data)
+    buffer = buffer .. data
     while true do
         local command_start = buffer:find("CMD_START:", 1, true)
         local pcm_start = buffer:find("PCM_START:", 1, true)
@@ -181,6 +184,15 @@ uart.on(uartid, "receive", function(id, len)
     end
         end
     if #buffer > 16384 then buffer = "" end
+end
+
+uart.on(uartid, "receive", function(id, len)
+    local data = uart.read(id, len)
+    if not remote.enabled() then receive(data) end
+end)
+remote.init(receive, function()
+    buffer = ""
+    call_player.network_lost()
 end)
 
 sys.taskInit(function()

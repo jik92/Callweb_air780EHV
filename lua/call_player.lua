@@ -264,6 +264,13 @@ function M.start(command)
     local ok, result = pcall(cc.dial, 0, command.to)
     if not ok or result == false then finish("dial_failed") end
 end
+function M.network_lost()
+    if active then
+        active.reason = "device_disconnected"
+        rx_queue, tx_queue = {}, {}
+        cc.hangUp(0)
+    end
+end
 function M.live(command)
     command.live = true
     M.start(command)

@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from .agent_settings import AgentSettings, AgentUpdate
 from .calls import Calls
+from .devices import DeviceBinding, DeviceRegistry, device_socket
 from .dingtalk import DingTalkNotifier, DingTalkSettings, DingTalkUpdate, send_notification
 from .recording import mix
 from .serial_bridge import SerialBridge, available_ports
@@ -33,6 +34,8 @@ ALLOWED_ORIGINS = {
     "http://localhost:9010",
     "http://127.0.0.1:9010",
 }
+
+ALLOWED_ORIGINS.update(filter(None, os.getenv("AIR780_ALLOWED_ORIGINS", "").split(",")))
 
 
 class Command(BaseModel):
@@ -57,8 +60,9 @@ class Command(BaseModel):
 
 
 class Service:
-    def __init__(self, store: Store):
+    def __init__(self, store: Store, device_id="local"):
         self.store = store
+        self.device_id = device_id
         self.device = None
         self.connection = {"connected": False, "ready": False, "port": None, "error": None}
         self.clients: set[asyncio.Queue] = set()
@@ -86,6 +90,7 @@ class Service:
             device = {**device, "mobile": mobile}
         return {
             "type": "snapshot",
+            "device_id": self.device_id,
             "bridge": {**self.connection, "last_seen": self.last_seen},
             "device": device,
             "messages": self.store.list(),
@@ -200,6 +205,83 @@ class Service:
         return {"type": "command_ack", "request_id": request_id, "duplicate": False}
 
 
+class DeviceManager:
+    def __init__(self, local, directory):
+        self.local = local
+        self.directory = directory
+        self.registry = DeviceRegistry(directory / "devices.sqlite3")
+        self.services = {"local": local}
+        self.tasks = []
+
+    def remote_service(self, device_id):
+        if device_id not in self.services:
+            UUID(device_id)  # Keep per-device paths inside the managed directory.
+            directory = self.directory / "devices" / device_id
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            directory.chmod(0o700)
+            service = Service(Store(directory / "console.sqlite3"), device_id)
+            self.services[device_id] = service
+            self.tasks.extend(
+                [
+                    asyncio.create_task(service.consume()),
+                    asyncio.create_task(service.dingtalk.run()),
+                ]
+            )
+        return self.services[device_id]
+
+    def get(self, device_id):
+        if device_id == "local":
+            return self.local
+        if not any(row["id"] == device_id for row in self.registry.list()):
+            raise HTTPException(404, "设备尚未绑定")
+        return self.remote_service(device_id)
+
+    def list(self):
+        result = []
+        rows = self.registry.list()
+        if os.getenv("AIR780_ENABLE_LOCAL_SERIAL", "1") != "0":
+            rows.insert(
+                0, {"id": "local", "name": "本机 USB 设备", "last_seen": self.local.last_seen}
+            )
+        for row in rows:
+            service = self.services.get(row["id"])
+            connected = bool(service and service.connection["connected"])
+            ready = bool(service and service.connection["ready"])
+            result.append(
+                {
+                    **row,
+                    "online": connected,
+                    "ready": ready,
+                    "transport": "usb" if row["id"] == "local" else "websocket",
+                    "version": (service.device or {}).get("version") if service else None,
+                    "last_seen": service.last_seen
+                    if service and service.last_seen
+                    else row["last_seen"],
+                    "call_active": bool(service and service.calls.active()),
+                }
+            )
+        return sorted(result, key=lambda row: not row["online"])
+
+    async def close(self):
+        for task in self.tasks:
+            task.cancel()
+        await asyncio.gather(*self.tasks, return_exceptions=True)
+        for device_id, service in self.services.items():
+            if device_id == "local":
+                continue
+            agent = service.calls.agent
+            service.calls.close()
+            if agent:
+                await agent.close()
+            service.store.close()
+        self.registry.close()
+
+
+def request_service(request):
+    device_id = request.query_params.get("device_id", "local")
+    return app.state.devices.get(device_id)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await asyncio.to_thread(DATA.mkdir, parents=True, exist_ok=True)
@@ -212,6 +294,7 @@ async def lifespan(app: FastAPI):
     store = Store(DATA / "console.sqlite3")
     service = Service(store)
     app.state.service = service
+    app.state.devices = DeviceManager(service, DATA)
     loop = asyncio.get_running_loop()
     service.bridge = SerialBridge(
         os.getenv("AIR780_SERIAL_PORT"),
@@ -219,11 +302,14 @@ async def lifespan(app: FastAPI):
     )
     consumer = asyncio.create_task(service.consume())
     notifier = asyncio.create_task(service.dingtalk.run())
-    service.bridge.start()
+    local_enabled = os.getenv("AIR780_ENABLE_LOCAL_SERIAL", "1") != "0"
+    if local_enabled:
+        service.bridge.start()
     try:
         yield
     finally:
-        await asyncio.to_thread(service.bridge.close)
+        if local_enabled:
+            await asyncio.to_thread(service.bridge.close)
         notifier.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await notifier
@@ -234,6 +320,7 @@ async def lifespan(app: FastAPI):
         service.calls.close()
         if agent:
             await agent.close()
+        await app.state.devices.close()
         store.close()
         lock.close()
 
@@ -250,14 +337,35 @@ async def validation_error(request: Request, exc: RequestValidationError):
     )
 
 
+@app.get("/api/devices")
+async def devices():
+    return app.state.devices.list()
+
+
+@app.post("/api/devices")
+async def bind_device(request: Request, binding: DeviceBinding):
+    if request.headers.get("origin") not in ALLOWED_ORIGINS:
+        raise HTTPException(403, "不允许的请求来源")
+    try:
+        device_id, token = app.state.devices.registry.bind(binding.name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return {"device_id": device_id, "token": token, "server_url": binding.server_url}
+
+
+@app.websocket("/ws/device")
+async def remote_device_socket(ws: WebSocket):
+    await device_socket(ws, app.state.devices)
+
+
 @app.get("/api/state")
-async def state():
-    return app.state.service.snapshot()
+async def state(request: Request):
+    return request_service(request).snapshot()
 
 
 @app.get("/api/agent")
-async def agent_settings():
-    return app.state.service.agent_settings.snapshot()
+async def agent_settings(request: Request):
+    return request_service(request).agent_settings.snapshot()
 
 
 @app.put("/api/agent")
@@ -265,7 +373,7 @@ async def save_agent_settings(request: Request, update: AgentUpdate):
     if request.headers.get("origin") not in ALLOWED_ORIGINS:
         raise HTTPException(403, "不允许的请求来源")
     try:
-        return app.state.service.agent_settings.save(update)
+        return request_service(request).agent_settings.save(update)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from None
 
@@ -276,7 +384,7 @@ async def test_agent_settings(request: Request):
         raise HTTPException(403, "不允许的请求来源")
     from .realtime_agent import RealtimeAgent
 
-    service = app.state.service
+    service = request_service(request)
     try:
         agent = RealtimeAgent(service.calls, None, None, service.agent_settings.session_config())
         await agent.prepare()
@@ -287,8 +395,8 @@ async def test_agent_settings(request: Request):
 
 
 @app.get("/api/dingtalk")
-async def dingtalk_settings():
-    service = app.state.service
+async def dingtalk_settings(request: Request):
+    service = request_service(request)
     return {**service.dingtalk_settings.snapshot(), "deliveries": service.store.push_list()}
 
 
@@ -296,7 +404,7 @@ async def dingtalk_settings():
 async def save_dingtalk_settings(request: Request, update: DingTalkUpdate):
     if request.headers.get("origin") not in ALLOWED_ORIGINS:
         raise HTTPException(403, "不允许的请求来源")
-    service = app.state.service
+    service = request_service(request)
     try:
         data = service.dingtalk_settings.save(update)
     except ValueError as exc:
@@ -308,7 +416,7 @@ async def save_dingtalk_settings(request: Request, update: DingTalkUpdate):
 async def test_dingtalk_settings(request: Request):
     if request.headers.get("origin") not in ALLOWED_ORIGINS:
         raise HTTPException(403, "不允许的请求来源")
-    service = app.state.service
+    service = request_service(request)
     if getattr(service, "dingtalk_test_at", 0) > time.monotonic() - 10:
         raise HTTPException(429, "请等待 10 秒后再测试")
     try:
@@ -325,21 +433,21 @@ async def test_dingtalk_settings(request: Request):
 
 
 @app.get("/api/call")
-async def call_state():
-    return app.state.service.calls.state
+async def call_state(request: Request):
+    return request_service(request).calls.state
 
 
 @app.get("/api/calls")
-async def call_history():
-    return app.state.service.store.call_list()
+async def call_history(request: Request):
+    return request_service(request).store.call_list()
 
 
 recording_lock = asyncio.Lock()
 
 
 @app.get("/api/calls/{call_id}/recording")
-async def call_recording(call_id: UUID):
-    store = app.state.service.store
+async def call_recording(call_id: UUID, request: Request):
+    store = request_service(request).store
     row = store.call_get(str(call_id))
     if not row or row["state"] not in ("ended", "failed", "unknown"):
         raise HTTPException(404, "录音尚不可用")
@@ -363,6 +471,11 @@ async def ports():
     return await asyncio.to_thread(available_ports)
 
 
+@app.get("/api/device-gateway/health")
+async def device_gateway_health():
+    return {"ok": True, "transport": "websocket"}
+
+
 @app.get("/api/health")
 async def health():
     return {"ok": True, "device_ready": app.state.service.connection["ready"]}
@@ -373,8 +486,12 @@ async def websocket_endpoint(ws: WebSocket):
     if ws.headers.get("origin") not in ALLOWED_ORIGINS:
         await ws.close(code=1008)
         return
+    try:
+        service = request_service(ws)
+    except HTTPException:
+        await ws.close(code=1008)
+        return
     await ws.accept()
-    service = app.state.service
     events = asyncio.Queue(maxsize=8)
     service.clients.add(events)
     events.put_nowait(service.snapshot())
@@ -412,7 +529,12 @@ async def call_socket(ws: WebSocket):
     if ws.headers.get("origin") not in ALLOWED_ORIGINS:
         await ws.close(code=1008)
         return
-    await app.state.service.calls.socket(ws)
+    try:
+        service = request_service(ws)
+    except HTTPException:
+        await ws.close(code=1008)
+        return
+    await service.calls.socket(ws)
 
 
 if FRONTEND.exists():

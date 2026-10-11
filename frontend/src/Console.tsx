@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   Alert,
@@ -20,6 +20,7 @@ import {
 } from 'antd'
 import type { MenuProps } from 'antd'
 import {
+  ArrowLeftOutlined,
   BellOutlined,
   ArrowDownOutlined,
   ArrowUpOutlined,
@@ -39,12 +40,22 @@ import { APP_NAME } from './constants'
 import CallPanel from './CallPanel'
 import AgentSettings from './AgentSettings'
 import DingTalkSettings from './DingTalkSettings'
-import { connection, stateKey } from './connection'
+import DeviceManagement from './DeviceManagement'
+import {
+  connection,
+  stateKey,
+  getDeviceState,
+  getDeviceCallState,
+  devicesKey,
+  getDevices,
+  selectDevice,
+} from './connection'
+import type { ManagedDevice } from './connection'
 import type { Sms, Snapshot } from './types'
 
 const { Header, Content, Footer, Sider } = Layout
 const menuItems: MenuProps['items'] = [
-  { key: 'overview', label: '设备总览', icon: <DashboardOutlined /> },
+  { key: 'devices', label: '设备管理', icon: <DashboardOutlined /> },
   {
     key: 'call-group',
     label: '实时通话',
@@ -65,6 +76,7 @@ const menuItems: MenuProps['items'] = [
   },
 ]
 const navigationLabels: Record<string, string> = {
+  devices: '设备管理',
   overview: '设备总览',
   call: '实时通话',
   sms: '短信管理',
@@ -139,7 +151,15 @@ export default function Console() {
   const [numberSim, setNumberSim] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(false)
   const [narrow, setNarrow] = useState(false)
-  const [navigation, setNavigation] = useState('overview')
+  const [navigation, setNavigation] = useState('devices')
+  const [deviceId, setDeviceId] = useState('local')
+  const [selectedDevice, setSelectedDevice] = useState<ManagedDevice | null>(null)
+  const [callActive, setCallActive] = useState(false)
+  const [switching, setSwitching] = useState(false)
+  const drafts = useRef(
+    new Map<string, { values: object; search: string; filter: string; selected: string | null }>(),
+  )
+  const devices = useQuery({ queryKey: devicesKey, queryFn: getDevices, refetchInterval: 5000 })
   const [filter, setFilter] = useState('全部')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<string | null>(null)
@@ -148,11 +168,7 @@ export default function Console() {
   const wsStatus = useSyncExternalStore(connection.subscribe, connection.getStatus)
   const state = useQuery<Snapshot>({
     queryKey: stateKey,
-    queryFn: async () => {
-      const response = await fetch('/api/state')
-      if (!response.ok) throw new Error('无法读取服务状态')
-      return response.json()
-    },
+    queryFn: getDeviceState,
     staleTime: Infinity,
   })
   useEffect(() => {
@@ -161,7 +177,7 @@ export default function Console() {
   }, [])
   const data = state.data
   const mobile = data?.device?.mobile
-  const ready = wsStatus === 'connected' && data?.bridge.ready === true
+  const ready = !switching && wsStatus === 'connected' && data?.bridge.ready === true
   const saveNumber = useMutation({
     mutationFn: (values: { to: string }) =>
       connection.command('set_sim_number', { to: values.to.trim(), sim_id: numberSim ?? '' }),
@@ -207,6 +223,41 @@ export default function Console() {
   )
   const incoming = data?.messages.filter((item) => item.direction === 'incoming').length ?? 0
   const outgoing = data?.messages.filter((item) => item.direction === 'outgoing').length ?? 0
+  async function openDevice(device: ManagedDevice) {
+    if (switching) return
+    if (device.id !== deviceId) {
+      if (callActive || busy || send.isPending || saveNumber.isPending || clearNumber.isPending) {
+        message.warning('当前设备正在通话或处理短信，请结束后再切换设备')
+        return
+      }
+      setSwitching(true)
+      try {
+        const call = await getDeviceCallState()
+        if (!['idle', 'ended', 'failed', 'unknown'].includes(call.state))
+          throw new Error('当前设备有待处理来电或正在通话，请结束后再切换设备')
+        drafts.current.set(deviceId, { values: form.getFieldsValue(), search, filter, selected })
+        await selectDevice(device.id)
+        setDeviceId(device.id)
+        setNumberSim(null)
+        const saved = drafts.current.get(device.id)
+        form.resetFields()
+        if (saved) form.setFieldsValue(saved.values)
+        setSearch(saved?.search ?? '')
+        setFilter(saved?.filter ?? '全部')
+        setSelected(saved?.selected ?? null)
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : '设备切换失败')
+        return
+      } finally {
+        setSwitching(false)
+      }
+    }
+    setSelectedDevice(device)
+    setNavigation('overview')
+  }
+  const availableMenuItems = menuItems?.map((item) =>
+    item && item.key !== 'devices' ? { ...item, disabled: !selectedDevice || switching } : item,
+  )
   const navigateMenu: MenuProps['onClick'] = ({ key }) => {
     setNavigation(key)
     if (narrow) setCollapsed(true)
@@ -237,10 +288,10 @@ export default function Console() {
         </a>
         <Menu
           theme="dark"
-          selectedKeys={[navigation]}
+          selectedKeys={[navigation === 'overview' ? 'devices' : navigation]}
           defaultOpenKeys={['call-group', 'sms-group']}
           mode="inline"
-          items={menuItems}
+          items={availableMenuItems}
           onClick={navigateMenu}
         />
       </Sider>
@@ -261,6 +312,7 @@ export default function Console() {
               onClick={() => setCollapsed((value) => !value)}
             />
             <span className="truncate font-semibold">{APP_NAME}</span>
+            {selectedDevice && <Tag className="max-[740px]:hidden!">{selectedDevice.name}</Tag>}
           </div>
           <div className="flex items-center gap-4 max-[740px]:gap-2">
             <Tag variant="filled" className="max-[480px]:hidden!">
@@ -275,21 +327,64 @@ export default function Console() {
         <Content className="mx-6! max-[740px]:mx-4!">
           <Breadcrumb
             className="my-4!"
-            items={[{ title: '控制台' }, { title: navigationLabels[navigation] }]}
+            items={[
+              { title: '控制台' },
+              ...(navigation === 'overview'
+                ? [
+                    {
+                      title: (
+                        <button
+                          type="button"
+                          onClick={() => setNavigation('devices')}
+                          className="cursor-pointer border-0 bg-transparent p-0 text-blue-600"
+                        >
+                          设备管理
+                        </button>
+                      ),
+                    },
+                    { title: selectedDevice?.name },
+                  ]
+                : []),
+              { title: navigationLabels[navigation] },
+            ]}
           />
+          <div hidden={navigation !== 'devices'}>
+            <DeviceManagement
+              devices={devices.data ?? []}
+              loading={devices.isPending || switching}
+              error={devices.isError}
+              onRefresh={() => void devices.refetch()}
+              onSelect={(device) => void openDevice(device)}
+            />
+          </div>
+          {selectedDevice && navigation !== 'devices' && (
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <Button icon={<ArrowLeftOutlined />} onClick={() => setNavigation('devices')}>
+                返回设备列表
+              </Button>
+              <span className="text-sm text-slate-500">{selectedDevice.name}</span>
+            </div>
+          )}
+          {switching && <Alert className="mb-4!" type="info" showIcon title="正在切换设备" />}
           {/* Keep the call owner mounted so menu navigation never interrupts audio. */}
           <div hidden={navigation !== 'call'}>
             <CallPanel
+              key={deviceId}
               device={data?.device ?? null}
               ready={ready}
-              onAnswer={() => setNavigation('call')}
+              onActivity={setCallActive}
+              onAnswer={() => {
+                if (!selectedDevice)
+                  setSelectedDevice(devices.data?.find((device) => device.id === deviceId) ?? null)
+                setNavigation('call')
+              }}
             />
           </div>
           <div hidden={navigation !== 'dingtalk'}>
-            <DingTalkSettings visible={navigation === 'dingtalk'} />
+            <DingTalkSettings key={deviceId} visible={navigation === 'dingtalk'} />
           </div>
           <div hidden={navigation !== 'agent'}>
-            <AgentSettings />
+            <AgentSettings key={deviceId} />
           </div>
           <div className="min-w-0">
             <aside
@@ -302,7 +397,11 @@ export default function Console() {
                   <h2>连接状态</h2>
                   <Tag color={ready ? 'green' : 'default'}>{ready ? '在线' : '离线'}</Tag>
                 </div>
-                <p className="mt-2 mb-[22px] text-[13px] text-[#6d8195]">USB 连接 · 本机串口桥接</p>
+                <p className="mt-2 mb-[22px] text-[13px] text-[#6d8195]">
+                  {selectedDevice?.transport === 'websocket'
+                    ? 'WS 连接 · 远程设备'
+                    : 'USB 连接 · 本机串口桥接'}
+                </p>
                 <div className="mb-5 flex items-center gap-[22px] rounded-xl border border-[#e6eff8] bg-[#f2f7fc] p-[18px] max-[740px]:mb-3 [&_strong]:block [&_strong]:font-mono [&_strong]:text-[26px] [&_strong]:font-[550] [&_small]:text-[13px] [&_small]:text-[#8a9aac] [&_div>span]:text-xs [&_div>span]:text-[#61758a]">
                   <div
                     className="flex h-12 items-end gap-[5px]"
@@ -323,7 +422,10 @@ export default function Console() {
                     <span>信号强度 CSQ</span>
                   </div>
                 </div>
-                <Info label="串口" value={data?.bridge.port?.replace('/dev/', '')} />
+                <Info
+                  label={selectedDevice?.transport === 'websocket' ? '连接通道' : '串口'}
+                  value={data?.bridge.port?.replace('/dev/', '')}
+                />
                 <Info label="应用版本" value={data?.device?.version} />
                 <Info label="最近更新" value={time(data?.bridge.last_seen ?? null)} />
                 <Button

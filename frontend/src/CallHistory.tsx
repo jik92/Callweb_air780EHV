@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { devicePath } from './connection'
 import { Alert, Button, Empty, Modal, Table, Tag } from 'antd'
 import { DownloadOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 
@@ -58,13 +59,13 @@ export default function CallHistory({ active }: { active: boolean }) {
   const history = useQuery<Record[]>({
     queryKey: callHistoryKey,
     queryFn: async () => {
-      const response = await fetch('/api/calls')
+      const response = await fetch(devicePath('/api/calls'))
       if (!response.ok) throw new Error('无法读取通话记录')
       return response.json()
     },
     refetchInterval: active ? 5000 : false,
   })
-  const recordingUrl = selected ? `/api/calls/${selected.id}/recording` : ''
+  const recordingUrl = selected ? devicePath(`/api/calls/${selected.id}/recording`) : ''
   return (
     <section className="mb-6 rounded-2xl border border-[#dce5ed] bg-white p-6 max-[740px]:p-5">
       <div className="mb-3 flex items-center justify-between gap-3">
