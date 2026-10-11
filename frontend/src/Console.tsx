@@ -34,6 +34,7 @@ import {
   SendOutlined,
   UsbOutlined,
 } from '@ant-design/icons'
+import { APP_NAME } from './constants'
 import CallPanel from './CallPanel'
 import AgentSettings from './AgentSettings'
 import { connection, stateKey } from './connection'
@@ -217,11 +218,11 @@ export default function Console() {
       >
         <a
           href="/"
-          aria-label="Air780 设备控制台"
+          aria-label={APP_NAME}
           className="flex h-16 items-center justify-center gap-2 overflow-hidden whitespace-nowrap text-white!"
         >
           <UsbOutlined className="text-2xl" />
-          {!collapsed && <strong className="text-lg tracking-wide">AIR780EHV</strong>}
+          {!collapsed && <strong className="text-lg tracking-wide">{APP_NAME}</strong>}
         </a>
         <Menu
           theme="dark"
@@ -248,7 +249,7 @@ export default function Console() {
               icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
               onClick={() => setCollapsed((value) => !value)}
             />
-            <span className="truncate font-semibold">设备控制台</span>
+            <span className="truncate font-semibold">{APP_NAME}</span>
           </div>
           <div className="flex items-center gap-4 max-[740px]:gap-2">
             <Tag variant="filled" className="max-[480px]:hidden!">
@@ -283,9 +284,8 @@ export default function Console() {
               className="grid min-w-0 grid-cols-2 gap-6 max-[900px]:grid-cols-1 max-[740px]:gap-4 [&[hidden]]:hidden"
             >
               <section className="p-6 max-[740px]:p-5 rounded-2xl border border-[#dce5ed] bg-white shadow-[0_3px_14px_#163b5c03]">
-                <div className="mb-2.5 text-xs tracking-[0.08em] text-[#6d8195]">当前设备</div>
-                <div className="flex items-center justify-between [&_h1]:m-0 [&_h1]:text-[28px] [&_h1]:font-[650] [&_h1]:tracking-[-0.6px]">
-                  <h1>Air780EHV</h1>
+                <div className="flex items-center justify-between [&_h2]:m-0 [&_h2]:text-base [&_h2]:font-semibold">
+                  <h2>连接状态</h2>
                   <Tag color={ready ? 'green' : 'default'}>{ready ? '在线' : '离线'}</Tag>
                 </div>
                 <p className="mt-2 mb-[22px] text-[13px] text-[#6d8195]">USB 连接 · 本机串口桥接</p>
@@ -574,7 +574,7 @@ export default function Console() {
         </Content>
         <Footer className="px-4! text-center!">
           <Typography.Text type="secondary" className="text-xs!">
-            AIR780EHV ©{new Date().getFullYear()} · 本地设备控制台
+            {APP_NAME} ©{new Date().getFullYear()} · 本地控制台
           </Typography.Text>
         </Footer>
       </Layout>

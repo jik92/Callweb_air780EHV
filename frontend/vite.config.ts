@@ -1,8 +1,18 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { APP_NAME } from './src/constants'
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    {
+      name: 'console-title',
+      transformIndexHtml() {
+        return [{ tag: 'title', children: APP_NAME, injectTo: 'head' }]
+      },
+    },
+  ],
   server: {
     port: 9011,
     strictPort: true,
