@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import json
+import os
 import struct
 import subprocess
 import tempfile
@@ -11,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-PROJECT = Path(__file__).resolve().parents[2]
+PROJECT = Path(os.getenv("AIR780_PROJECT_DIR", str(Path(__file__).resolve().parents[2])))
 FIRMWARE = PROJECT / "firmware/LuatOS-SoC_V2052_Air780EHV_13.soc"
 
 

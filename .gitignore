@@ -22,3 +22,6 @@ environment.json
 .env
 .env.*
 !.env.example
+
+# Electron dependencies and generated macOS artifacts
+desktop/node_modules/

@@ -263,7 +263,13 @@ async function flashRequest(path: string, init?: RequestInit) {
     throw new Error(typeof data.detail === 'string' ? data.detail : '刷写服务请求失败')
   return data
 }
-export function getFlashBridge(): Promise<{ paused: boolean }> {
+export function getFlashBridge(): Promise<{
+  paused: boolean
+  connected: boolean
+  ready: boolean
+  port: string | null
+  error: string | null
+}> {
   return flashRequest('/api/flash/bridge')
 }
 export function controlFlashBridge(action: 'pause' | 'resume'): Promise<{ paused: boolean }> {

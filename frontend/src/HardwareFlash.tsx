@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Alert, Button, Checkbox, Progress, Segmented, Tag } from 'antd'
+import { Alert, Button, Checkbox, Progress, Segmented, Switch, Tag } from 'antd'
 import { DownloadOutlined, UsbOutlined } from '@ant-design/icons'
 import { controlFlashBridge, getFlashBridge, prepareFlash } from './connection'
 import { serialApi, verifyPlan, WebFlasher } from './webFlash'
@@ -10,6 +10,9 @@ export default function HardwareFlash({ visible }: { visible: boolean }) {
   const [mode, setMode] = useState<'script' | 'full'>('script')
   const [plan, setPlan] = useState<FlashPlan | null>(null)
   const [paused, setPaused] = useState(false)
+  const [bridgeState, setBridgeState] = useState<Awaited<ReturnType<typeof getFlashBridge>> | null>(
+    null,
+  )
   const [port, setPort] = useState<SerialPort | null>(null)
   const [confirmed, setConfirmed] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -22,10 +25,25 @@ export default function HardwareFlash({ visible }: { visible: boolean }) {
   const log = (text: string) =>
     setLogs((items) => [...items.slice(-199), `${new Date().toLocaleTimeString('zh-CN')}  ${text}`])
   useEffect(() => {
-    if (visible)
+    if (!visible) return
+    let active = true
+    const refresh = () =>
       getFlashBridge()
-        .then((data) => setPaused(data.paused))
-        .catch((e) => setError(e.message))
+        .then((data) => {
+          if (active) {
+            setPaused(data.paused)
+            setBridgeState(data)
+          }
+        })
+        .catch((e) => {
+          if (active) setError(e.message)
+        })
+    void refresh()
+    const timer = window.setInterval(refresh, 2000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
   }, [visible])
   useEffect(() => {
     const protect = (event: BeforeUnloadEvent) => {
@@ -76,6 +94,56 @@ export default function HardwareFlash({ visible }: { visible: boolean }) {
           title="刷写前备份设备文件与录音"
           description="仅脚本模式会覆盖脚本区；全量模式会更新底层固件。准备文件不会操作设备。请保持供电，刷写期间不要刷新或关闭页面。"
         />
+        <div className="mt-4 rounded-xl bg-[#f2f7fc] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className="text-sm font-semibold">设备串口连接</span>
+            <Switch
+              aria-label="设备串口连接"
+              checked={!paused}
+              checkedChildren="连接设备"
+              unCheckedChildren="释放串口"
+              disabled={busy || !bridgeState}
+              loading={busy && !running}
+              onChange={(checked) =>
+                void perform(async () => {
+                  const data = await controlFlashBridge(checked ? 'resume' : 'pause')
+                  setPaused(data.paused)
+                  log(checked ? '已启用设备连接，等待设备响应' : '已释放串口，可进行硬件刷写')
+                })
+              }
+            />
+          </div>
+          <p className="mb-0 text-xs leading-6 text-[#6d8195]">
+            {paused ? '串口已释放' : bridgeState?.ready ? '设备已连接' : '等待设备连接'}
+            {bridgeState?.port && ` · ${bridgeState.port}`}
+            <br />
+            开启后连接设备；Mac 应用会先释放同一串口的开发控制台桥接。刷写前请关闭，刷写后重新开启。
+          </p>
+          {bridgeState?.error && !paused && (
+            <Alert
+              className="mt-3!"
+              type="warning"
+              showIcon
+              title={
+                bridgeState.error.includes('exclusively lock')
+                  ? '串口被占用：点击下方重新连接，或关闭其他串口工具。'
+                  : '设备尚未连接，请检查 USB 连接与 BOOT 状态。'
+              }
+            />
+          )}
+          <Button
+            className="mt-3"
+            disabled={busy || paused}
+            onClick={() =>
+              void perform(async () => {
+                await controlFlashBridge('resume')
+                log('已请求重新连接；开发控制台占用将先释放')
+              })
+            }
+          >
+            重新连接 / 释放开发占用
+          </Button>
+        </div>
         <div className="mt-6 flex flex-col gap-4">
           <div>
             <h3 className="m-0 mb-2 text-sm font-semibold">1 · 准备刷写文件</h3>

@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .agent_settings import AgentSettings, AgentUpdate
+from .bridge_handoff import release_development_bridge
 from .calls import Calls
 from .dingtalk import DingTalkNotifier, DingTalkSettings, DingTalkUpdate, send_notification
 from .flashing import FlashRequest, prepare
@@ -28,7 +29,7 @@ from .serial_bridge import SerialBridge, available_ports
 from .store import Store
 from .usb_network import UsbNetwork, UsbNetworkRequest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(os.getenv("AIR780_PROJECT_DIR", str(Path(__file__).resolve().parents[2]))) / "backend"
 DATA = Path(os.getenv("AIR780_DATA_DIR", str(ROOT.parent / "data")))
 FRONTEND = ROOT.parent / "frontend" / "dist"
 ALLOWED_ORIGINS = {
@@ -37,6 +38,21 @@ ALLOWED_ORIGINS = {
     "http://localhost:9010",
     "http://127.0.0.1:9010",
 }
+
+desktop_origin = os.getenv("AIR780_DESKTOP_ORIGIN")
+if desktop_origin:
+    from urllib.parse import urlparse
+
+    parsed_origin = urlparse(desktop_origin)
+    if (
+        parsed_origin.scheme == "http"
+        and parsed_origin.hostname == "127.0.0.1"
+        and parsed_origin.port
+        and 9000 <= parsed_origin.port <= 9999
+        and parsed_origin.path in ("", "/")
+        and not parsed_origin.query
+    ):
+        ALLOWED_ORIGINS.add(desktop_origin.rstrip("/"))
 
 
 class Command(BaseModel):
@@ -287,7 +303,8 @@ async def prepare_flash(request: Request, options: FlashRequest):
 
 @app.get("/api/flash/bridge")
 async def flash_bridge_status():
-    return {"paused": app.state.service.bridge.paused.is_set()}
+    service = app.state.service
+    return {"paused": service.bridge.paused.is_set(), **service.connection}
 
 
 @app.post("/api/flash/bridge/{action}")
@@ -315,6 +332,8 @@ async def flash_bridge_control(request: Request, action: Literal["pause", "resum
         if not released:
             raise HTTPException(503, "串口尚未释放，请稍后再次暂停")
     else:
+        if os.getenv("AIR780_DESKTOP_INSTANCE"):
+            await release_development_bridge(bridge.discover())
         bridge.paused.clear()
     return {"paused": bridge.paused.is_set()}
 
@@ -450,7 +469,10 @@ async def ports():
 
 @app.get("/api/health")
 async def health():
-    return {"ok": True, "device_ready": app.state.service.connection["ready"]}
+    result = {"ok": True, "device_ready": app.state.service.connection["ready"]}
+    if instance := os.getenv("AIR780_DESKTOP_INSTANCE"):
+        result["desktop_instance"] = instance
+    return result
 
 
 @app.websocket("/ws")

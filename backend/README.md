@@ -21,7 +21,8 @@ uv run --directory backend uvicorn app.main:app --host 127.0.0.1 --port 9010
 只允许设置当前就绪 SIM，ICCID 变化时拒绝旧页面的请求；配置写入 SQLite
 `sim_numbers` 表，不发送到设备，不产生短信或电话。快照中的 `mobile.number_source`
 区分 `sim`、`manual`、`unavailable`，SIM 返回的号码优先于人工标注。
-需要烧录时先停止服务，烧录后重新启动。
+使用 CLI 烧录时先停止服务，烧录后重新启动。
+使用 Chrome「硬件刷写」菜单时保持服务运行，由页面暂停和恢复桥接。
 
 ## 接口
 
@@ -97,7 +98,8 @@ uv run --directory backend pytest
 USB 上行采用带 UUID 和长度的 `PCM_START:` 帧，下行采用 `AUD_START:` 帧，
 和已有 JSON 命令共享单一串口读取进程。音频队列有限，拥塞丢弃旧帧。
 `GET /api/call` 返回实时通话状态、上下行字节数及设备写入统计。
-页面断线请求挂断；设备上行输入超时 5 秒及通话 90 秒上限为兜底。
+页面断线请求挂断；设备上行输入超时 5 秒为兜底。实时通话无固定 90 秒强制结束限制，
+连接、接听及挂断等状态长时间未确认时保留未知结果；TTS 播报任务仍有时限。
 
 ## Agent配置与音频
 
@@ -110,3 +112,47 @@ Realtime预连接期间状态为 `agent_connecting`，成功才向模块发送�
 失败恢复为 `incoming`。Agent通话状态携带 `mode=agent` 和 `agent_status`。
 准备连接时页面断开或来电结束不会继续接听。运行时错误停止音频并请求挂断。
 使用 numpy / soxr 重采样，websockets连接所选服务，无自动重连或命令重放。
+
+## Chrome 刷写文件准备与桥接控制
+
+用户操作步骤见 [主文档：Chrome 直接串口刷写](../README.md#chrome-直接串口刷写)。
+硬件写入由 Chrome 直接执行，后端准备接口不打开设备串口。
+
+| 接口 | 用途 |
+| --- | --- |
+| `POST /api/flash/prepare` | JSON `{"mode":"script"}` 或 `{"mode":"full"}`，解包固定固件、编译当前 `lua/` 项目，返回分区数据与 SHA-256 |
+| `GET /api/flash/bridge` | 返回当前 `{"paused":true}` 或 `{"paused":false}` |
+| `POST /api/flash/bridge/pause` | 检查设备操作是否繁忙，暂停串口线程，等待端口真正释放 |
+| `POST /api/flash/bridge/resume` | 恢复串口自动发现和连接，等待正常运行的设备回应 |
+
+POST 接口要求匹配控制台的 Origin。固件固定为
+`firmware/LuatOS-SoC_V2052_Air780EHV_13.soc`；编译使用已有 `tools/luatos-cli`，
+输出位于临时目录，不覆盖 `build/script.bin`。不接收用户上传的固件或任意地址。
+下载代理为固定 EC718 USB AgentBoot，准备时校验固定长度与 SHA-256，来源见
+[资源说明](resources/webflash-source.md)。
+
+通话、待发送短信、定位、设备网络测试或 USB 网卡操作未完成时，暂停请求返回 409。
+暂停期间快照为 `bridge.connected=false`、`bridge.ready=false`、
+`bridge.error="browser_flashing"`；WebSocket 与服务继续运行，设备命令被拒绝。
+恢复桥接只恢复连接及状态/收件箱同步，不会重放短信、拨号或刷写命令。
+
+刷写成功、失败或关闭浏览器都不会自动恢复桥接；同一后端进程运行期间保留暂停状态，
+需手动调用恢复接口或通过刷写页面恢复。暂停状态不写入数据库，重启后端会恢复默认连接行为，
+所以刷写过程中不要重启控制台服务。
+
+自动测试使用模拟串口验证端口关闭后才确认释放、繁忙拒绝及 Origin 限制；
+文件准备测试编译本机项目但不烧录设备。用户实机刷写结果与自动测试分开记录于主文档。
+
+## macOS 桌面封装
+
+`desktop_entry.py` 是 PyInstaller 打包入口，Electron 启动其 ARM64 可执行文件，
+无需安装 Python。仅监听本机 9012，与开发环境的 9010/9011 分离。
+入口设置 `AIR780_PROJECT_DIR` 读取应用资源目录中的前端、固件、Lua 和 CLI；
+`AIR780_DATA_DIR` 指向用户应用支持目录，`AIR780_DESKTOP_ORIGIN` 仅允许指定的
+本机 9xxx HTTP Origin。开发环境的默认路径和端口不变。
+
+Electron 关闭子进程 stdin 时，入口请求 uvicorn 正常退出并执行清理；
+桌面应用意外退出后 stdin EOF 同样触发清理。只结束应用自身启动的进程。
+`AIR780_DESKTOP_INSTANCE` 是启动实例标识，由健康接口返回，供 Electron 确认
+等待的服务属于本次启动；它不是访问凭据。
+构建和运行说明见 [桌面应用文档](../desktop/README.md)。

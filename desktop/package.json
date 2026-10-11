@@ -1,0 +1,86 @@
+{
+  "name": "air780-console-desktop",
+  "version": "0.1.2",
+  "description": "Air780EHV local hardware console for Apple Silicon",
+  "author": "jik92",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check main.cjs && node --test test-runtime.cjs",
+    "pack": "electron-builder --mac dir --arm64 --publish never",
+    "dist": "electron-builder --mac dmg --arm64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.jik92.air780-console",
+    "productName": "Air780 Console",
+    "directories": {
+      "output": "../build/mac",
+      "buildResources": "../build/mac-assets"
+    },
+    "files": [
+      "main.cjs",
+      "runtime.cjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../build/mac-backend/air780-backend",
+        "to": "backend-runtime"
+      },
+      {
+        "from": "../frontend/dist",
+        "to": "project/frontend/dist"
+      },
+      {
+        "from": "../lua",
+        "to": "project/lua",
+        "filter": [
+          "**/*",
+          "!AGENTS.md"
+        ]
+      },
+      {
+        "from": "../firmware/LuatOS-SoC_V2052_Air780EHV_13.soc",
+        "to": "project/firmware/LuatOS-SoC_V2052_Air780EHV_13.soc"
+      },
+      {
+        "from": "../tools/luatos-cli",
+        "to": "project/tools/luatos-cli"
+      },
+      {
+        "from": "../backend/resources",
+        "to": "project/backend/resources"
+      },
+      {
+        "from": "../build/mac-assets/trayTemplate.png",
+        "to": "trayTemplate.png"
+      },
+      {
+        "from": "../build/mac-assets/trayTemplate@2x.png",
+        "to": "trayTemplate@2x.png"
+      }
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "../build/mac-assets/app.icns",
+      "identity": null,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "实时通话需要电脑麦克风，将语音传给 Air780EHV 设备。"
+      }
+    },
+    "artifactName": "Air780-Console-${version}-${arch}.${ext}"
+  }
+}
