@@ -26,6 +26,7 @@ import {
   CheckCircleOutlined,
   CopyOutlined,
   DashboardOutlined,
+  GlobalOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   MessageOutlined,
@@ -39,12 +40,14 @@ import { APP_NAME } from './constants'
 import CallPanel from './CallPanel'
 import AgentSettings from './AgentSettings'
 import DingTalkSettings from './DingTalkSettings'
+import NetworkTest from './NetworkTest'
 import { connection, stateKey } from './connection'
 import type { Sms, Snapshot } from './types'
 
 const { Header, Content, Footer, Sider } = Layout
 const menuItems: MenuProps['items'] = [
   { key: 'overview', label: '设备总览', icon: <DashboardOutlined /> },
+  { key: 'network', label: '网络测试', icon: <GlobalOutlined /> },
   {
     key: 'call-group',
     label: '实时通话',
@@ -66,6 +69,7 @@ const menuItems: MenuProps['items'] = [
 ]
 const navigationLabels: Record<string, string> = {
   overview: '设备总览',
+  network: '网络测试',
   call: '实时通话',
   sms: '短信管理',
   agent: 'AGENT设置',
@@ -278,6 +282,9 @@ export default function Console() {
             items={[{ title: '控制台' }, { title: navigationLabels[navigation] }]}
           />
           {/* Keep the call owner mounted so menu navigation never interrupts audio. */}
+          <div hidden={navigation !== 'network'}>
+            <NetworkTest ready={ready} supported={data?.device?.network_test_supported === true} />
+          </div>
           <div hidden={navigation !== 'call'}>
             <CallPanel
               device={data?.device ?? null}

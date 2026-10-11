@@ -206,3 +206,25 @@ export function saveDingTalkSettings(data: {
 export function testDingTalkPush(): Promise<{ message: string }> {
   return dingtalkRequest('/api/dingtalk/test', { method: 'POST' })
 }
+
+export type NetworkTestResult = {
+  reachable: boolean
+  status_code: number | null
+  elapsed_ms: number
+  error?: string
+  headers?: Record<string, string>
+  url: string
+  method: 'HEAD'
+  source: 'device_4g'
+}
+export async function testDeviceNetwork(url: string): Promise<NetworkTestResult> {
+  const response = await fetch('/api/network-test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: url.trim() }),
+  })
+  const data = await response.json()
+  if (!response.ok)
+    throw new Error(typeof data.detail === 'string' ? data.detail : '网络测试请求失败')
+  return data
+}

@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from .agent_settings import AgentSettings, AgentUpdate
 from .calls import Calls
 from .dingtalk import DingTalkNotifier, DingTalkSettings, DingTalkUpdate, send_notification
+from .network_test import NetworkTestRequest, probe
 from .recording import mix
 from .serial_bridge import SerialBridge, available_ports
 from .store import Store
@@ -65,6 +66,7 @@ class Service:
         self.events = asyncio.Queue()
         self.bridge = None
         self.last_seen = None
+        self.network_waiter = None
         self.agent_settings = AgentSettings(store.recordings.parent / "agent")
         self.calls = Calls(self)
         self.dingtalk_settings = DingTalkSettings(store.recordings.parent / "dingtalk")
@@ -113,6 +115,13 @@ class Service:
                 continue
             self.calls.event(event)
             kind = event.get("type")
+            if self.network_waiter:
+                request_id, future = self.network_waiter
+                if not future.done():
+                    if kind == "network_test_result" and event.get("request_id") == request_id:
+                        future.set_result(event)
+                    elif kind == "transport" and not event.get("connected"):
+                        future.set_exception(ConnectionError("USB disconnected"))
             if kind == "call_pcm":
                 continue
             sim_id = (self.device or {}).get("mobile", {}).get("iccid", "")
@@ -327,6 +336,13 @@ async def test_dingtalk_settings(request: Request):
 @app.get("/api/call")
 async def call_state():
     return app.state.service.calls.state
+
+
+@app.post("/api/network-test")
+async def network_test(request: Request, test: NetworkTestRequest):
+    if request.headers.get("origin") not in ALLOWED_ORIGINS:
+        raise HTTPException(403, "不允许的请求来源")
+    return await probe(app.state.service, test)
 
 
 @app.get("/api/calls")
