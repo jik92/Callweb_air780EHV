@@ -42,6 +42,15 @@ class Store:
             "WHERE state IN ('pending','sending')",
             (time.time(),),
         )
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS stream_sms_pushes (
+            message_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, state TEXT NOT NULL,
+            error TEXT, updated_at REAL NOT NULL)""")
+        self.conn.execute(
+            "UPDATE stream_sms_pushes SET state='unknown',"
+            "error='服务重启，未自动重试',updated_at=? "
+            "WHERE state IN ('pending','sending')",
+            (time.time(),),
+        )
         self.conn.execute("""CREATE TABLE IF NOT EXISTS dingtalk_replies (
             request_id TEXT PRIMARY KEY, state TEXT NOT NULL, reference TEXT,
             error TEXT, updated_at REAL NOT NULL)""")
@@ -79,8 +88,10 @@ class Store:
 
     def reply_source(self, reference):
         rows = self.conn.execute(
-            "SELECT m.* FROM messages m JOIN sms_pushes p ON p.message_id=m.id "
-            "WHERE m.direction='incoming' AND p.state='sent' AND substr(m.id,4,16)=? LIMIT 2",
+            "SELECT m.* FROM messages m WHERE m.direction='incoming' AND substr(m.id,4,16)=? "
+            "AND (EXISTS (SELECT 1 FROM sms_pushes p WHERE p.message_id=m.id AND p.state='sent') "
+            "OR EXISTS (SELECT 1 FROM stream_sms_pushes p "
+            "WHERE p.message_id=m.id AND p.state='sent')) LIMIT 2",
             (reference,),
         ).fetchall()
         return dict(rows[0]) if len(rows) == 1 else None
@@ -223,6 +234,29 @@ class Store:
             for row in self.conn.execute(
                 "SELECT message_id,state,error,updated_at FROM sms_pushes "
                 "ORDER BY updated_at DESC LIMIT 20"
+            )
+        ]
+
+    def stream_push_claim(self, message_id, conversation_id):
+        cursor = self.conn.execute(
+            "INSERT OR IGNORE INTO stream_sms_pushes VALUES (?, ?, 'pending', NULL, ?)",
+            (message_id, conversation_id, time.time()),
+        )
+        self.conn.commit()
+        return bool(cursor.rowcount)
+
+    def stream_push_update(self, message_id, state, error=None):
+        self.conn.execute(
+            "UPDATE stream_sms_pushes SET state=?,error=?,updated_at=? WHERE message_id=?",
+            (state, error, time.time(), message_id),
+        )
+        self.conn.commit()
+
+    def stream_push_list(self):
+        return [
+            dict(row)
+            for row in self.conn.execute(
+                "SELECT * FROM stream_sms_pushes ORDER BY updated_at DESC LIMIT 20"
             )
         ]
 

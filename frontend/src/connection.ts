@@ -184,8 +184,37 @@ export const dingtalkSettingsKey = ['dingtalk-settings']
 async function dingtalkRequest(path: string, init?: RequestInit) {
   const response = await fetch(path, init)
   const data = await response.json()
-  if (!response.ok)
-    throw new Error(typeof data.detail === 'string' ? data.detail : '钉钉推送配置请求失败')
+  if (!response.ok) {
+    if (typeof data.detail === 'string') throw new Error(data.detail)
+    if (response.status === 422) {
+      const labels: Record<string, string> = {
+        enabled: '连接开关',
+        allow_sending: '回复开关',
+        push_enabled: '收件推送开关',
+        client_id: 'AppKey',
+        client_secret: 'AppSecret',
+        robot_code: '机器人编码',
+        push_conversation_id: '推送目标群 ID',
+        conversation_id: '允许回复的群 ID',
+        user_ids: '用户 ID',
+        webhook: 'Webhook',
+        secret: '加签密钥',
+      }
+      const fields = Array.isArray(data.detail)
+        ? data.detail.flatMap((item: { loc?: unknown[] }) =>
+            Array.isArray(item.loc)
+              ? item.loc.flatMap((field) =>
+                  typeof field === 'string' && labels[field] ? [labels[field]] : [],
+                )
+              : [],
+          )
+        : []
+      throw new Error(
+        `配置字段校验失败${fields.length ? `：${[...new Set(fields)].join('、')}` : ''}。请检查填写格式；刚更新服务时，请刷新页面后重新保存。`,
+      )
+    }
+    throw new Error('钉钉推送配置请求失败')
+  }
   return data
 }
 export function getDingTalkSettings(): Promise<DingTalkConfig> {
@@ -279,13 +308,27 @@ export function controlFlashBridge(action: 'pause' | 'resume'): Promise<{ paused
 export type DingTalkReplyConfig = {
   enabled: boolean
   allow_sending: boolean
+  push_enabled: boolean
+  push_conversation_id: string
+  robot_code: string
   client_id: string
   conversation_id: string
   user_ids: string[]
   has_secret: boolean
   status: string
   error: string | null
-  last_sender: { conversation_id: string | null; user_id: string | null } | null
+  last_sender: {
+    conversation_id: string | null
+    user_id: string | null
+    robot_code: string | null
+  } | null
+  deliveries: {
+    message_id: string
+    conversation_id: string
+    state: string
+    error: string | null
+    updated_at: number
+  }[]
   requests: {
     request_id: string
     reference: string | null
@@ -300,6 +343,9 @@ export function getDingTalkReplies(): Promise<DingTalkReplyConfig> {
 export function saveDingTalkReplies(data: {
   enabled: boolean
   allow_sending: boolean
+  push_enabled: boolean
+  push_conversation_id: string
+  robot_code: string
   client_id: string
   client_secret?: string
   conversation_id: string

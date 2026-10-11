@@ -163,7 +163,14 @@ Electron 关闭子进程 stdin 时，入口请求 uvicorn 正常退出并执行�
 `PUT /api/dingtalk/replies` 保存配置并重建接收连接，要求本机页面 Origin。
 字段包含 `enabled`（接收连接）、`allow_sending`（允许实际短信回复）、`client_id`、
 `client_secret`、`conversation_id`、`user_ids` 和 `clear_secret`。
-连接和发送分别授权，默认都关闭；仅连接时可发现群与用户 ID。
+新增 `push_enabled`（应用机器人收件推送）、`push_conversation_id`（留空使用 `conversation_id`）、
+`robot_code`（可选，留空使用 Client ID）。连接、收件推送和 SMS 回复分别授权；新增推送默认关闭，
+旧配置自动兼容；启用推送须能解析到具体群，两项群 ID 不能同时为空。仅连接时可发现群、用户 ID 和 RobotCode；API 的 `deliveries` 返回独立的 Stream 推送记录。
+Webhook 与 Stream 推送独立处理新收件事件，历史同步不推送；两者同时开启分别推送。
+应用机器人通过 `/v1.0/oauth2/accessToken` 取内存缓存令牌，以 `sampleText` 调用
+`/v1.0/robot/groupMessages/send`，不依赖 Webhook 或临时会话地址。
+SQLite `stream_sms_pushes` 保留去重与投递结果；关闭或修改配置会跳过尚未发送的队列项，
+未知结果和重启不自动重发。两个模式中任一成功推送的原始收件都可以被引用回复。
 凭据文件 `data/dingtalk/reply.json` 权限为 600，API 不返回密钥。
 
 `conversation_id` 留空允许所有机器人所在群，`user_ids` 为空允许所有群成员；

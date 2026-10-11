@@ -173,7 +173,9 @@ class Service:
                     if isinstance(message, dict):
                         self.store.incoming(message, sim_id)
             elif kind == "incoming_sms":
-                self.dingtalk.enqueue(self.store.incoming(event, sim_id))
+                message = self.store.incoming(event, sim_id)
+                self.dingtalk.enqueue(message)
+                self.dingtalk_replies.notifier.enqueue(message)
             elif kind in ("command_written", "sms_send_accepted"):
                 if event.get("request_id"):
                     row = self.store.get(event["request_id"])

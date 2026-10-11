@@ -13,6 +13,7 @@ import websockets
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .agent_settings import AgentSettings
+from .dingtalk_stream_push import StreamNotifier
 
 TOPIC = "/v1.0/im/bot/messages/get"
 OPEN = "https://api.dingtalk.com/v1.0/gateway/connections/open"
@@ -22,13 +23,18 @@ class ReplyUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = False
     allow_sending: bool = False
+    push_enabled: bool = False
+    push_conversation_id: str = Field(default="", max_length=300)
+    robot_code: str = Field(default="", max_length=200)
     client_id: str = Field(default="", max_length=200)
     client_secret: str | None = Field(default=None, max_length=500)
     conversation_id: str = Field(default="", max_length=300)
     user_ids: list[str] = Field(default_factory=list, max_length=100)
     clear_secret: bool = False
 
-    @field_validator("client_id", "client_secret", "conversation_id")
+    @field_validator(
+        "client_id", "client_secret", "conversation_id", "push_conversation_id", "robot_code"
+    )
     @classmethod
     def clean_value(cls, value):
         if value and (value != value.strip() or any(c.isspace() for c in value)):
@@ -76,6 +82,12 @@ class ReplySettings:
             raise ValueError("连接前请配置应用 Client ID 和 Client Secret")
         if data["allow_sending"] and not data["enabled"]:
             raise ValueError("允许回复短信前请开启连接 Stream 机器人并配置应用凭据")
+        if data["push_enabled"] and not (
+            data["enabled"] and (data["push_conversation_id"] or data["conversation_id"])
+        ):
+            raise ValueError(
+                "启用 Stream 收件推送前请开启连接，并填写允许回复的群 ID 或推送目标群 ID"
+            )
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.directory.chmod(0o700)
         AgentSettings.write(self.path, json.dumps(data, ensure_ascii=False, indent=2))
@@ -133,6 +145,8 @@ class DingTalkReplies:
     def __init__(self, service):
         self.service = service
         self.settings = ReplySettings(service.store.recordings.parent / "dingtalk")
+        self.notifier = StreamNotifier(service.store, self.settings)
+        self.push_task = None
         self.task = None
         self.workers = set()
         self.status = "disabled"
@@ -147,9 +161,12 @@ class DingTalkReplies:
             "error": self.error,
             "last_sender": self.last_sender,
             "requests": self.service.store.reply_list(),
+            "deliveries": self.service.store.stream_push_list(),
         }
 
     async def restart(self):
+        if self.push_task is None:
+            self.push_task = asyncio.create_task(self.notifier.run())
         # Stop receiving new commands; already submitted SMS still get a result receipt.
         if self.task:
             self.task.cancel()
@@ -163,13 +180,14 @@ class DingTalkReplies:
             self.status = "disabled"
 
     async def close(self):
-        tasks = ([self.task] if self.task else []) + list(self.workers)
+        tasks = [task for task in (self.task, self.push_task) if task] + list(self.workers)
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self.task = None
         self.workers.clear()
+        self.push_task = None
 
     async def handle(self, message):
         config = self.settings.read()
@@ -180,7 +198,11 @@ class DingTalkReplies:
         ):
             return
         sender = message.get("senderStaffId")
-        self.last_sender = {"conversation_id": message.get("conversationId"), "user_id": sender}
+        self.last_sender = {
+            "conversation_id": message.get("conversationId"),
+            "user_id": sender,
+            "robot_code": message.get("robotCode"),
+        }
         if (
             not config["allow_sending"]
             or not message.get("conversationId")

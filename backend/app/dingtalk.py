@@ -128,6 +128,15 @@ async def send_notification(config, text):
         return "unknown", "网络连接或响应异常，投递结果未知；未自动重试"
 
 
+def notification_text(message):
+    received = time.strftime("%Y-%m-%d %H:%M:%S %z", time.localtime(message["timestamp"]))
+    return (
+        f"智能语音客服 · 收到短信\n短信编号：{message['id'][3:19]}\n"
+        f"发送号码：{message['phone']}\n"
+        f"接收时间：{received}\n短信内容：\n{message['content']}"
+    )
+
+
 class DingTalkNotifier:
     def __init__(self, store, settings):
         self.store, self.settings = store, settings
@@ -151,15 +160,7 @@ class DingTalkNotifier:
                     self.store.push_update(message["id"], "skipped", "推送已关闭，未发送")
                     continue
                 self.store.push_update(message["id"], "sending")
-                received = time.strftime(
-                    "%Y-%m-%d %H:%M:%S %z", time.localtime(message["timestamp"])
-                )
-                text = (
-                    f"智能语音客服 · 收到短信\n短信编号：{message['id'][3:19]}\n"
-                    f"发送号码：{message['phone']}\n"
-                    f"接收时间：{received}\n短信内容：\n{message['content']}"
-                )
-                state, error = await send_notification(config, text)
+                state, error = await send_notification(config, notification_text(message))
                 self.store.push_update(message["id"], state, error)
             finally:
                 self.queue.task_done()

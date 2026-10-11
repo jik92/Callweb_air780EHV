@@ -60,14 +60,15 @@ export default function DingTalkSettings({ visible }: { visible: boolean }) {
     <section className="mb-6 min-w-0 rounded-2xl border border-[#dce5ed] bg-white p-6 max-[740px]:p-5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="m-0 flex items-center gap-2 text-base font-semibold">
-          <BellOutlined /> 钉钉推送
+          <BellOutlined /> Webhook 短信推送
         </h2>
         <Tag color={settings.data?.ready ? 'green' : 'default'}>
           {settings.data?.ready ? '新短信自动推送' : '推送未启用'}
         </Tag>
       </div>
       <p className="mb-5 text-sm leading-6 text-slate-500">
-        启用后，新收到的短信会将发送号码、接收时间和完整内容推送到指定钉钉群。历史收件箱同步和已发送短信不会推送。
+        Webhook 模式与下方 Stream
+        模式独立。启用后，新收到的短信会将发送号码、接收时间和完整内容推送到指定钉钉群。历史收件箱同步和已发送短信不会推送。
       </p>
       {settings.isPending ? (
         <Spin />
@@ -81,7 +82,7 @@ export default function DingTalkSettings({ visible }: { visible: boolean }) {
       ) : (
         <div className="grid min-w-0 grid-cols-2 gap-6 max-[900px]:grid-cols-1">
           <Form form={form} layout="vertical" disabled={busy} onFinish={save.mutate}>
-            <Form.Item name="enabled" label="启用短信钉钉推送" valuePropName="checked">
+            <Form.Item name="enabled" label="启用 Webhook 短信推送" valuePropName="checked">
               <Switch />
             </Form.Item>
             <Form.Item
