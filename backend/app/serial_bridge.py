@@ -49,6 +49,13 @@ class SerialBridge:
         self.audio.put_nowait(frame)
         return dropped
 
+    def clear_audio(self):
+        while True:
+            try:
+                self.audio.get_nowait()
+            except queue.Empty:
+                break
+
     def discover(self) -> str | None:
         if self.port:
             return self.port

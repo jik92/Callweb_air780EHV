@@ -125,3 +125,45 @@ export function sendCallCommand(
   if (socket?.readyState !== WebSocket.OPEN) throw new Error('通话服务已断开')
   socket.send(JSON.stringify({ action, request_id: crypto.randomUUID(), ...data }))
 }
+
+export type AgentConfig = {
+  enabled: boolean
+  provider: 'aihubmix' | 'openai'
+  model: string
+  voice: string
+  greeting: string
+  instructions: string
+  has_api_key: boolean
+  key_source: 'local' | 'environment' | 'none'
+  ready: boolean
+}
+export const agentSettingsKey = ['agent-settings']
+async function agentRequest(path: string, init?: RequestInit) {
+  const response = await fetch(path, init)
+  const data = await response.json()
+  if (!response.ok)
+    throw new Error(typeof data.detail === 'string' ? data.detail : 'Agent配置请求失败')
+  return data
+}
+export function getAgentSettings(): Promise<AgentConfig> {
+  return agentRequest('/api/agent')
+}
+export function saveAgentSettings(data: {
+  enabled: boolean
+  provider: 'aihubmix' | 'openai'
+  model: string
+  voice: string
+  greeting: string
+  instructions: string
+  api_key?: string
+  clear_api_key?: boolean
+}): Promise<AgentConfig> {
+  return agentRequest('/api/agent', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+export function testAgentConnection(): Promise<{ message: string }> {
+  return agentRequest('/api/agent/test', { method: 'POST' })
+}

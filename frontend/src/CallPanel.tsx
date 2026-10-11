@@ -10,11 +10,12 @@ import {
   DeleteOutlined,
   ArrowLeftOutlined,
   RedoOutlined,
+  RobotOutlined,
 } from '@ant-design/icons'
 import type { Snapshot } from './types'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import CallHistory, { callHistoryKey } from './CallHistory'
-import { createCallSocket, sendCallCommand } from './connection'
+import { agentSettingsKey, getAgentSettings, createCallSocket, sendCallCommand } from './connection'
 import { startRingback } from './ringback'
 
 type CallState = {
@@ -22,6 +23,9 @@ type CallState = {
   call_id?: string
   sample_rate?: number
   to?: string
+  mode?: 'browser' | 'agent'
+  agent_status?: string
+  agent_error?: string
   reason?: string
   up_bytes?: number
   down_bytes?: number
@@ -33,6 +37,7 @@ const labels: Record<string, string> = {
   idle: '未通话',
   incoming: '来电待接听',
   answering: '正在接听',
+  agent_connecting: '正在连接 Agent',
   dialing: '拨号中',
   connected: '已接通，建立音频中',
   streaming: '实时通话中',
@@ -68,6 +73,7 @@ export default function CallPanel({
 }) {
   const { message } = App.useApp()
   const queryClient = useQueryClient()
+  const agentSettings = useQuery({ queryKey: agentSettingsKey, queryFn: getAgentSettings })
   const [form] = Form.useForm()
   const [call, setCall] = useState<CallState>({ state: 'idle' })
   const [connected, setConnected] = useState(false)
@@ -171,8 +177,14 @@ export default function CallPanel({
       } else if (event.type === 'call_state') {
         if (event.state !== callRef.current.state || event.call_id !== callRef.current.call_id)
           void queryClient.invalidateQueries({ queryKey: callHistoryKey })
+        if (
+          event.state === 'incoming' &&
+          (event.call_id !== callRef.current.call_id || terminal.has(callRef.current.state))
+        )
+          setError('')
         callRef.current = event
         setCall(event)
+        if (event.mode === 'agent' && event.state !== 'incoming') setPreparing(false)
         if (event.state === 'dialing' && event.call_id === mine.current && context.current) {
           if (!ringback.current) ringback.current = startRingback(context.current)
         } else stopRingback()
@@ -289,8 +301,25 @@ export default function CallPanel({
       message.error(text)
     }
   }
+  function answerWithAgent() {
+    setError('')
+    setPreparing(true)
+    try {
+      mine.current = call.call_id ?? null
+      sendCallCommand(socket.current, 'call_agent_answer', { call_id: call.call_id! })
+      onAnswer()
+    } catch (cause) {
+      setPreparing(false)
+      mine.current = null
+      setError(cause instanceof Error ? cause.message : 'Agent接听失败')
+    }
+  }
   const active = !terminal.has(call.state)
-  const canSendTone = connected && call.state === 'streaming' && mine.current === call.call_id
+  const canSendTone =
+    connected &&
+    call.mode !== 'agent' &&
+    call.state === 'streaming' &&
+    mine.current === call.call_id
   function editNumber(text: string, remove = false) {
     if (active || preparing) return
     const input = numberInput.current?.input
@@ -346,6 +375,13 @@ export default function CallPanel({
             接听
           </Button>
           <Button
+            icon={<RobotOutlined />}
+            disabled={!ready || !connected || preparing || !agentSettings.data?.ready}
+            onClick={answerWithAgent}
+          >
+            Agent接听
+          </Button>
+          <Button
             danger
             icon={<StopOutlined />}
             disabled={!connected || preparing}
@@ -360,6 +396,11 @@ export default function CallPanel({
             拒接
           </Button>
         </div>
+        <p className="mb-0 mt-3 text-xs text-slate-500">
+          {agentSettings.data?.ready
+            ? 'Agent接听按已保存的 AGENT.md 回复，无需电脑麦克风。'
+            : '如需 Agent接听，请先在「AGENT设置」中启用并保存配置。'}
+        </p>
       </Modal>
       <section
         id="call-workspace"
@@ -380,6 +421,18 @@ export default function CallPanel({
         <p className="mb-4 text-xs text-[#6d8195]">
           用电脑麦克风和耳机通话。来电时可选择接听或拒接，关闭接听或拨号的页面会挂断。建议戴耳机。接通后自动保存双向录音。
         </p>
+        {active && call.mode === 'agent' && (
+          <Alert
+            className="mb-4!"
+            showIcon
+            type="info"
+            title={`Agent通话 · ${call.agent_status === 'speaking' ? '正在回复' : call.agent_status === 'listening' ? '正在聆听' : call.state === 'agent_connecting' ? '连接 Realtime中' : '准备通话'}`}
+            description="电话由 Agent按场景回复，电脑麦克风不参与。可随时挂断。"
+          />
+        )}
+        {call.agent_error && (
+          <Alert className="mb-4!" showIcon type="error" title="Agent连接或音频异常，已请求挂断" />
+        )}
         {active && call.to && <p className="break-all font-mono text-sm">{call.to}</p>}
         {call.state === 'dialing' && mine.current === call.call_id && (
           <p role="status" className="mb-4 text-xs text-[#6d8195]">
@@ -445,7 +498,7 @@ export default function CallPanel({
           </Button>
           <Button
             icon={muted ? <AudioMutedOutlined /> : <AudioOutlined />}
-            disabled={!active || mine.current !== call.call_id}
+            disabled={!active || call.mode === 'agent' || mine.current !== call.call_id}
             onClick={() => {
               setMuted(!muted)
               capture.current?.port.postMessage({ muted: !muted })
@@ -504,11 +557,13 @@ export default function CallPanel({
             <h3 className="m-0 text-sm font-medium">{active ? '通话按键' : '输入号码'}</h3>
             <p className="m-0 text-xs leading-6 text-[#6d8195]">
               {active
-                ? canSendTone
-                  ? '点击按键向对方发送按键音，可操作“按 1 转人工”等语音菜单。麦克风静音时仍可使用。'
-                  : mine.current !== call.call_id
-                    ? '请在发起这通电话的页面操作按键。'
-                    : '接通并建立音频后即可使用按键。'
+                ? call.mode === 'agent'
+                  ? 'Agent通话由场景指令控制回复，不使用电脑麦克风或按键音。'
+                  : canSendTone
+                    ? '点击按键向对方发送按键音，可操作“按 1 转人工”等语音菜单。麦克风静音时仍可使用。'
+                    : mine.current !== call.call_id
+                      ? '请在发起这通电话的页面操作按键。'
+                      : '接通并建立音频后即可使用按键。'
                 : '点击数字输入号码，再点击拨号。可删除、清空或添加国际区号 +；* 和 # 在通话接通后可用。'}
             </p>
             <p className="m-0 text-xs text-[#6d8195]">
@@ -536,11 +591,23 @@ export default function CallPanel({
         </div>
         <div className="mt-5 grid grid-cols-[minmax(120px,200px)_1fr] items-center gap-6 max-[740px]:grid-cols-1 max-[740px]:gap-2">
           <div>
-            <span className="text-xs text-[#6d8195]">麦克风音量</span>
-            <Progress percent={level} showInfo={false} size="small" />
+            {call.mode === 'agent' ? (
+              <span className="text-xs text-[#6d8195]">
+                Agent语音 ·{' '}
+                {call.agent_status === 'speaking' ? '正在回复' : active ? '正在聆听' : '已结束'}
+              </span>
+            ) : (
+              <>
+                <span className="text-xs text-[#6d8195]">麦克风音量</span>
+                <Progress percent={level} showInfo={false} size="small" />
+              </>
+            )}
           </div>
           <div className="text-xs leading-6 text-[#6d8195]">
-            网页发出 {(localSent / 1024).toFixed(1)} KB · 网页收到 {(heard / 1024).toFixed(1)} KB ·
+            {call.mode === 'agent' ? 'Agent发出' : '网页发出'}{' '}
+            {((call.mode === 'agent' ? (call.up_bytes ?? 0) : localSent) / 1024).toFixed(1)} KB ·{' '}
+            {call.mode === 'agent' ? 'Agent收到' : '网页收到'}{' '}
+            {((call.mode === 'agent' ? (call.down_bytes ?? 0) : heard) / 1024).toFixed(1)} KB ·
             设备已写入 {((call.device_up_bytes ?? 0) / 1024).toFixed(1)} KB
             {call.sample_rate ? ` · ${call.sample_rate / 1000} kHz` : ''}
             {call.reason ? ` · ${call.reason}` : ''}

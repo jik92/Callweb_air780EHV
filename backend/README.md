@@ -98,3 +98,15 @@ USB 上行采用带 UUID 和长度的 `PCM_START:` 帧，下行采用 `AUD_START
 和已有 JSON 命令共享单一串口读取进程。音频队列有限，拥塞丢弃旧帧。
 `GET /api/call` 返回实时通话状态、上下行字节数及设备写入统计。
 页面断线请求挂断；设备上行输入超时 5 秒及通话 90 秒上限为兜底。
+
+## Agent配置与音频
+
+`GET /api/agent` 读取脱敏配置；`PUT /api/agent` 保存配置与 AGENT.md；
+`POST /api/agent/test` 验证已保存的 Realtime连接。写入与验证要求控制台 Origin。
+Key不返回，包含Key的校验错误也不回显输入值。配置保存在 `data/agent/`，不提交。
+
+`/ws/call` 增加 `call_agent_answer` 命令，参数 `request_id`、`call_id`。
+Realtime预连接期间状态为 `agent_connecting`，成功才向模块发送接听命令；
+失败恢复为 `incoming`。Agent通话状态携带 `mode=agent` 和 `agent_status`。
+准备连接时页面断开或来电结束不会继续接听。运行时错误停止音频并请求挂断。
+使用 numpy / soxr 重采样，websockets连接所选服务，无自动重连或命令重放。

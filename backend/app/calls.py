@@ -10,6 +10,7 @@ from uuid import UUID
 from fastapi import WebSocket, WebSocketDisconnect
 
 from .protocol import encode_audio_input
+from .realtime_agent import RealtimeAgent
 from .recording import Recording
 
 TERMINAL = {"idle", "ended", "failed", "unknown"}
@@ -25,6 +26,7 @@ class Calls:
         self.last_down_sequence = -1
         self.state = {"type": "call_state", "state": "idle", "call_id": None}
         self.recording = None
+        self.agent = None
 
     def publish(self):
         if self.state.get("call_id"):
@@ -124,9 +126,57 @@ class Calls:
             raise ValueError("不支持的通话命令")
         return {"type": "command_ack", "request_id": request_id}
 
+    async def answer_agent(self, raw, owner):
+        if not isinstance(raw, dict):
+            raise ValueError("命令必须为对象")
+        request_id = str(UUID(raw.get("request_id", "")))
+        call_id = raw.get("call_id")
+        if self.state["state"] != "incoming" or call_id != self.state.get("call_id"):
+            raise ValueError("来电已结束或已由其他页面处理")
+        device_call = (self.service.device or {}).get("call", {})
+        if not self.service.connection["ready"] or not device_call.get("audio_ready"):
+            raise ValueError("设备通话音频尚未就绪")
+        config = self.service.agent_settings.session_config()
+        agent = RealtimeAgent(self, call_id, owner, config)
+        self.agent = agent
+        self.owner = owner
+        self.state.update(
+            state="agent_connecting",
+            mode="agent",
+            agent_status="connecting",
+            transition_at=time.time(),
+        )
+        self.publish()
+        try:
+            await agent.prepare()
+            if self.agent is not agent or self.state["state"] != "agent_connecting":
+                raise ValueError("来电已结束，Agent未接听")
+            self.service.bridge.send({"action": "call_answer", "request_id": call_id})
+            self.state.update(state="answering", agent_status="ready", transition_at=time.time())
+            self.publish()
+        except BaseException:
+            if self.agent is agent:
+                self.stop_agent()
+                if self.state["state"] == "agent_connecting":
+                    self.owner = None
+                    self.state.update(state="incoming", mode="browser", agent_status="error")
+                    self.publish()
+            await agent.close()
+            raise
+        return {"type": "command_ack", "request_id": request_id}
+
+    def stop_agent(self):
+        if self.agent:
+            agent, self.agent = self.agent, None
+            agent.stop()
+            self.state["agent_status"] = "stopped"
+            if hasattr(self.service.bridge, "clear_audio"):
+                self.service.bridge.clear_audio()
+
     def hangup(self, reason):
         if not self.active():
             return
+        self.stop_agent()
         try:
             self.service.bridge.send({"action": "call_hangup", "request_id": self.state["call_id"]})
             self.state.update(state="hanging_up", reason=reason, transition_at=time.time())
@@ -170,6 +220,7 @@ class Calls:
                 self.state["recording_error"] = str(exc)
 
     def close(self):
+        self.stop_agent()
         self.finish_recording()
         if self.active():
             self.state.update(state="unknown", reason="service_restarted", ended_at=time.time())
@@ -178,6 +229,7 @@ class Calls:
     def event(self, event):
         kind = event.get("type")
         if kind == "transport" and not event.get("connected") and self.active():
+            self.stop_agent()
             self.finish_recording()
             self.state.update(state="unknown", reason="serial_disconnected", ended_at=time.time())
             self.publish()
@@ -203,8 +255,10 @@ class Calls:
             if pcm:
                 peak = max(abs(sample[0]) for sample in struct.iter_unpack("<h", pcm))
                 self.state["down_peak"] = max(self.state.get("down_peak", 0), peak)
+            if self.agent:
+                self.agent.feed(pcm)
             messages = self.clients.get(self.owner)
-            if messages is not None:
+            if messages is not None and not self.agent:
                 self.put(
                     messages, struct.pack("<HI", event["sample_rate"], event["sequence"]) + pcm
                 )
@@ -224,6 +278,8 @@ class Calls:
                     except (OSError, ValueError) as exc:
                         self.state["recording_error"] = str(exc)
                 self.last_audio = time.monotonic()
+                if self.agent:
+                    self.agent.start(event["sample_rate"])
             elif state in ("CONNECTED", "SPEECH_START") and self.state["state"] in (
                 "dialing",
                 "answering",
@@ -232,6 +288,7 @@ class Calls:
             self.state["device_event"] = state
             self.publish()
         elif kind == "call_result":
+            self.stop_agent()
             self.finish_recording()
             self.state.update(
                 state="ended" if event.get("connected") else "failed",
@@ -272,11 +329,13 @@ class Calls:
         if self.state["state"] == "streaming" and time.monotonic() - self.last_audio > 5:
             self.hangup("browser_audio_timeout")
         if (
-            self.state["state"] in ("dialing", "answering", "connected", "hanging_up")
+            self.state["state"]
+            in ("dialing", "agent_connecting", "answering", "connected", "hanging_up")
             and time.time()
             - self.state.get("transition_at", self.state.get("started_at", time.time()))
             > 100
         ):
+            self.stop_agent()
             self.finish_recording()
             self.state.update(state="unknown", reason="call_result_timeout", ended_at=time.time())
             self.publish()
@@ -298,29 +357,50 @@ class Calls:
                 else:
                     await ws.send_json(item)
 
+        async def answer_and_reply(raw):
+            try:
+                response = await self.answer_agent(raw, owner)
+            except (ValueError, TypeError, AttributeError, queue.Full) as exc:
+                response = {
+                    "type": "command_error",
+                    "error": str(exc) or "设备命令队列已满",
+                    "request_id": raw.get("request_id"),
+                }
+            self.put(messages, response)
+
         sender = asyncio.create_task(send())
+        answering = None
         try:
             while True:
                 item = await ws.receive()
                 if item["type"] == "websocket.disconnect":
                     break
                 if item.get("bytes") is not None:
-                    self.audio(item["bytes"], owner)
+                    if not self.agent:
+                        self.audio(item["bytes"], owner)
                     continue
                 raw = None
                 try:
                     raw = json.loads(item.get("text", ""))
+                    if isinstance(raw, dict) and raw.get("action") == "call_agent_answer":
+                        if answering and not answering.done():
+                            raise ValueError("Agent正在连接，请等待")
+                        answering = asyncio.create_task(answer_and_reply(raw))
+                        continue
                     response = self.command(raw, owner)
                 except (ValueError, TypeError, AttributeError, queue.Full) as exc:
                     response = {
                         "type": "command_error",
-                        "error": str(exc),
+                        "error": str(exc) or "设备命令队列已满",
                         "request_id": raw.get("request_id") if isinstance(raw, dict) else None,
                     }
                 self.put(messages, response)
         except (WebSocketDisconnect, ValueError):
             pass
         finally:
+            if answering and not answering.done():
+                answering.cancel()
+                await asyncio.gather(answering, return_exceptions=True)
             if self.owner == owner:
                 self.hangup("browser_disconnected")
             self.clients.pop(owner, None)

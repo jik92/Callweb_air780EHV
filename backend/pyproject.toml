@@ -3,7 +3,14 @@ name = "air780-console"
 version = "0.1.0"
 description = "Local serial to WebSocket bridge for Air780EHV"
 requires-python = ">=3.12"
-dependencies = ["fastapi>=0.115,<1", "uvicorn[standard]>=0.34,<1", "pyserial==3.5"]
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.34,<1",
+    "pyserial==3.5",
+    "websockets>=15,<17",
+    "numpy>=2,<3",
+    "soxr>=0.5,<1",
+]
 
 [dependency-groups]
 dev = ["ruff>=0.12", "pytest>=8", "httpx>=0.28"]

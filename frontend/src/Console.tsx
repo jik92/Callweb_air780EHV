@@ -30,23 +30,34 @@ import {
   MessageOutlined,
   PhoneOutlined,
   ReloadOutlined,
+  RobotOutlined,
   SendOutlined,
   UsbOutlined,
 } from '@ant-design/icons'
 import CallPanel from './CallPanel'
+import AgentSettings from './AgentSettings'
 import { connection, stateKey } from './connection'
 import type { Sms, Snapshot } from './types'
 
 const { Header, Content, Footer, Sider } = Layout
 const menuItems: MenuProps['items'] = [
   { key: 'overview', label: '设备总览', icon: <DashboardOutlined /> },
-  { key: 'call', label: '实时通话', icon: <PhoneOutlined /> },
+  {
+    key: 'call-group',
+    label: '实时通话',
+    icon: <PhoneOutlined />,
+    children: [
+      { key: 'call', label: '通话控制', icon: <PhoneOutlined /> },
+      { key: 'agent', label: 'AGENT设置', icon: <RobotOutlined /> },
+    ],
+  },
   { key: 'sms', label: '短信管理', icon: <MessageOutlined /> },
 ]
 const navigationLabels: Record<string, string> = {
   overview: '设备总览',
   call: '实时通话',
   sms: '短信管理',
+  agent: 'AGENT设置',
 }
 
 const signalHeights = [
@@ -215,6 +226,7 @@ export default function Console() {
         <Menu
           theme="dark"
           selectedKeys={[navigation]}
+          defaultOpenKeys={['call-group']}
           mode="inline"
           items={menuItems}
           onClick={navigateMenu}
@@ -260,6 +272,9 @@ export default function Console() {
               ready={ready}
               onAnswer={() => setNavigation('call')}
             />
+          </div>
+          <div hidden={navigation !== 'agent'}>
+            <AgentSettings />
           </div>
           <div className="min-w-0">
             <aside

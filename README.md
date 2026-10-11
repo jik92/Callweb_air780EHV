@@ -243,3 +243,28 @@ uv run --directory backend uvicorn app.main:app --host 127.0.0.1 --port 9010
 设备脚本 `001.999.009` 将来电主动推送到已打开的控制台。任何菜单下都会弹出来电号码和接听/拒接按钮；接听前先获取麦克风权限，成功后进入实时通话页面。设备不上电自动拨号，也不自动接听。同一通来电只允许一个页面接听，其他页面可查看状态。
 
 使用电脑麦克风和耳机进行双向通话，支持静音、通话按键音及双向录音。实时通话不再有验证版 90 秒强制结束限制；音频中断、接听页面断开仍会请求挂断，不会自动重拨。TTS 播报任务保留原有时限。页面需保持打开才能显示通知。
+
+### Agent电话与 AGENT设置
+
+实时通话菜单下增加「通话控制」与「AGENT设置」。来电弹窗可选择普通「接听」、
+「Agent接听」或「拒接」；普通通话继续使用电脑麦克风，Agent接听由后台直接桥接
+模块音频和 Realtime WebSocket，无需电脑麦克风。不会自动接听或拨号。
+
+在 AGENT设置中选择 AiHubMix 或 OpenAI 官方、配置 API Key、模型（默认
+`gpt-realtime-2.1`）、声音、开场白和场景指令，启用并保存。Key 仅保存于忽略目录
+`data/agent/settings.json`（文件权限 600），API 不回传 Key。也可分别使用后台环境变量
+`AIHUBMIX_API_KEY` / `OPENAI_API_KEY`；切换提供方时必须使用对应 Key。
+
+场景指令保存为 `data/agent/AGENT.md`。每通 Agent电话接听前读取一次，修改设置或
+直接编辑该文件从下一通生效。默认提供通用电话助手模板，需要填写实际业务背景与标准回复。
+「验证已保存的连接」仅检查 Realtime 会话配置，不发送电话音频、不接听或拨号。
+Agent接听先完成 Realtime配置验证，失败时保留来电供普通接听或拒接。
+
+后台使用流式重采样连接设备 8/16 kHz 与 Realtime 24 kHz PCM，按 20 ms 节奏向电话
+发送语音或静音。支持来电人打断，清理待播队列并截断模型会话中的未播放回复；
+已经写入模块的少量音频无法撤回。双向录音继续保存于本机。API中断、队列拥塞或接听页面
+断开会请求挂断，不自动重试。通话音频与场景指令发送至所选提供方，会产生 API 费用。
+Agent仅进行语音回复，不授予工具或业务执行权限。
+
+接口与协议参考：[AiHubMix Realtime示例](https://aihubmix.com/model/gpt-realtime-2.1)、
+[OpenAI Realtime WebSocket](https://developers.openai.com/api/docs/guides/voice-websockets?voice-api=realtime)。

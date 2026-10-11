@@ -27,7 +27,8 @@ class Store:
             sim_id TEXT PRIMARY KEY, phone TEXT NOT NULL, confirmed_at REAL NOT NULL)""")
         self.conn.execute(
             "UPDATE calls SET state='unknown',reason='service_restarted',ended_at=? "
-            "WHERE state IN ('dialing','incoming','answering','connected','streaming',"
+            "WHERE state IN ('dialing','incoming','agent_connecting','answering',"
+            "'connected','streaming',"
             "'hanging_up')",
             (time.time(),),
         )

@@ -11,11 +11,13 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from .agent_settings import AgentSettings, AgentUpdate
 from .calls import Calls
 from .recording import mix
 from .serial_bridge import SerialBridge, available_ports
@@ -62,6 +64,7 @@ class Service:
         self.events = asyncio.Queue()
         self.bridge = None
         self.last_seen = None
+        self.agent_settings = AgentSettings(store.recordings.parent / "agent")
         self.calls = Calls(self)
 
     def snapshot(self):
@@ -220,7 +223,10 @@ async def lifespan(app: FastAPI):
         consumer.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await consumer
+        agent = service.calls.agent
         service.calls.close()
+        if agent:
+            await agent.close()
         store.close()
         lock.close()
 
@@ -228,9 +234,49 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Air780EHV 本地控制台", lifespan=lifespan)
 
 
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError):
+    # Never return submitted API keys in validation errors.
+    return JSONResponse(
+        status_code=422,
+        content={"detail": [{"loc": error["loc"], "msg": error["msg"]} for error in exc.errors()]},
+    )
+
+
 @app.get("/api/state")
 async def state():
     return app.state.service.snapshot()
+
+
+@app.get("/api/agent")
+async def agent_settings():
+    return app.state.service.agent_settings.snapshot()
+
+
+@app.put("/api/agent")
+async def save_agent_settings(request: Request, update: AgentUpdate):
+    if request.headers.get("origin") not in ALLOWED_ORIGINS:
+        raise HTTPException(403, "不允许的请求来源")
+    try:
+        return app.state.service.agent_settings.save(update)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@app.post("/api/agent/test")
+async def test_agent_settings(request: Request):
+    if request.headers.get("origin") not in ALLOWED_ORIGINS:
+        raise HTTPException(403, "不允许的请求来源")
+    from .realtime_agent import RealtimeAgent
+
+    service = app.state.service
+    try:
+        agent = RealtimeAgent(service.calls, None, None, service.agent_settings.session_config())
+        await agent.prepare()
+        await agent.close()
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return {"ok": True, "message": "Realtime 连接和场景配置验证成功，未接听或拨打电话"}
 
 
 @app.get("/api/call")

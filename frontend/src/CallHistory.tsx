@@ -19,6 +19,7 @@ export const callHistoryKey = ['call-history']
 const labels: { [key: string]: string } = {
   incoming: '来电待接听',
   answering: '正在接听',
+  agent_connecting: '正在连接 Agent',
   dialing: '拨号中',
   connected: '已接通',
   streaming: '通话中',
@@ -30,6 +31,8 @@ const labels: { [key: string]: string } = {
 const reasons: { [key: string]: string } = {
   user_hangup: '主动挂断',
   user_rejected: '拒接来电',
+  agent_connection_failed: 'Agent连接失败',
+  agent_input_overflow: 'Agent音频拥塞',
   answer_failed: '接听失败',
   browser_disconnected: '页面关闭',
   audio_timeout: '音频超时',
