@@ -26,6 +26,8 @@ class SerialBridge:
         self.commands = queue.Queue(maxsize=32)
         self.audio = queue.Queue(maxsize=6)
         self.stop = threading.Event()
+        self.paused = threading.Event()
+        self.released = threading.Event()
         self.thread = threading.Thread(target=self.run, name="air780-serial", daemon=True)
 
     def start(self):
@@ -36,6 +38,8 @@ class SerialBridge:
         self.thread.join(timeout=3)
 
     def send(self, command: dict):
+        if self.paused.is_set():
+            raise ValueError("串口桥接已暂停用于浏览器刷写")
         self.commands.put_nowait(command)
 
     def send_audio(self, frame: bytes):
@@ -70,6 +74,11 @@ class SerialBridge:
 
     def run(self):
         while not self.stop.is_set():
+            if self.paused.is_set():
+                self.released.set()
+                self.stop.wait(0.1)
+                continue
+            self.released.clear()
             port = self.discover()
             if not port:
                 self.emit({"type": "transport", "connected": False, "error": "device_not_found"})
@@ -86,7 +95,7 @@ class SerialBridge:
                     next_status = time.monotonic() + 10
                     next_inbox = time.monotonic() + 60
                     last_frame = time.monotonic()
-                    while not self.stop.is_set():
+                    while not self.stop.is_set() and not self.paused.is_set():
                         try:
                             command = self.commands.get_nowait()
                         except queue.Empty:

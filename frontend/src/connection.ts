@@ -246,3 +246,26 @@ export async function configureUsbNetwork(enabled: boolean, mode: 'ecm' | 'rndis
     throw new Error(typeof data.detail === 'string' ? data.detail : 'USB 网卡配置失败')
   return data
 }
+
+export async function prepareFlash(
+  mode: 'full' | 'script',
+): Promise<import('./webFlash').FlashPlan> {
+  return flashRequest('/api/flash/prepare', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  })
+}
+async function flashRequest(path: string, init?: RequestInit) {
+  const response = await fetch(path, init)
+  const data = await response.json()
+  if (!response.ok)
+    throw new Error(typeof data.detail === 'string' ? data.detail : '刷写服务请求失败')
+  return data
+}
+export function getFlashBridge(): Promise<{ paused: boolean }> {
+  return flashRequest('/api/flash/bridge')
+}
+export function controlFlashBridge(action: 'pause' | 'resume'): Promise<{ paused: boolean }> {
+  return flashRequest(`/api/flash/bridge/${action}`, { method: 'POST' })
+}

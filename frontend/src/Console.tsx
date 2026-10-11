@@ -38,6 +38,7 @@ import {
 } from '@ant-design/icons'
 import { APP_NAME } from './constants'
 import CallPanel from './CallPanel'
+import HardwareFlash from './HardwareFlash'
 import AgentSettings from './AgentSettings'
 import DingTalkSettings from './DingTalkSettings'
 import NetworkTest from './NetworkTest'
@@ -48,6 +49,7 @@ import type { Sms, Snapshot } from './types'
 const { Header, Content, Footer, Sider } = Layout
 const menuItems: MenuProps['items'] = [
   { key: 'overview', label: '设备总览', icon: <DashboardOutlined /> },
+  { key: 'flash', label: '硬件刷写', icon: <UsbOutlined /> },
   { key: 'network', label: '网络测试', icon: <GlobalOutlined /> },
   {
     key: 'call-group',
@@ -70,6 +72,7 @@ const menuItems: MenuProps['items'] = [
 ]
 const navigationLabels: Record<string, string> = {
   overview: '设备总览',
+  flash: '硬件刷写',
   network: '网络测试',
   call: '实时通话',
   sms: '短信管理',
@@ -283,6 +286,9 @@ export default function Console() {
             items={[{ title: '控制台' }, { title: navigationLabels[navigation] }]}
           />
           {/* Keep the call owner mounted so menu navigation never interrupts audio. */}
+          <div hidden={navigation !== 'flash'}>
+            <HardwareFlash visible={navigation === 'flash'} />
+          </div>
           <div hidden={navigation !== 'network'}>
             <NetworkTest
               ready={ready}
@@ -317,6 +323,20 @@ export default function Console() {
                   <Tag color={ready ? 'green' : 'default'}>{ready ? '在线' : '离线'}</Tag>
                 </div>
                 <p className="mt-2 mb-[22px] text-[13px] text-[#6d8195]">USB 连接 · 本机串口桥接</p>
+                {data?.bridge.error === 'browser_flashing' && (
+                  <Alert
+                    className="mb-4!"
+                    type="info"
+                    showIcon
+                    title="后台桥接已暂停用于硬件刷写"
+                    description="刷写完成并正常上电后，请到硬件刷写页面恢复后台桥接，设备信息才会更新。"
+                    action={
+                      <Button size="small" onClick={() => setNavigation('flash')}>
+                        前往恢复
+                      </Button>
+                    }
+                  />
+                )}
                 <div className="mb-5 flex items-center gap-[22px] rounded-xl border border-[#e6eff8] bg-[#f2f7fc] p-[18px] max-[740px]:mb-3 [&_strong]:block [&_strong]:font-mono [&_strong]:text-[26px] [&_strong]:font-[550] [&_small]:text-[13px] [&_small]:text-[#8a9aac] [&_div>span]:text-xs [&_div>span]:text-[#61758a]">
                   <div
                     className="flex h-12 items-end gap-[5px]"

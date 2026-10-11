@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from .agent_settings import AgentSettings, AgentUpdate
 from .calls import Calls
 from .dingtalk import DingTalkNotifier, DingTalkSettings, DingTalkUpdate, send_notification
+from .flashing import FlashRequest, prepare
 from .location import Location
 from .network_test import NetworkTestRequest, probe
 from .recording import mix
@@ -166,6 +167,8 @@ class Service:
                     "submitted" if event.get("success") else "failed",
                     event.get("error"),
                 )
+            if getattr(self.bridge, "paused", None) and self.bridge.paused.is_set():
+                self.connection.update(connected=False, ready=False, error="browser_flashing")
             self.broadcast()
 
     def command(self, raw: dict) -> dict:
@@ -270,6 +273,50 @@ async def validation_error(request: Request, exc: RequestValidationError):
 @app.get("/api/state")
 async def state():
     return app.state.service.snapshot()
+
+
+@app.post("/api/flash/prepare")
+async def prepare_flash(request: Request, options: FlashRequest):
+    if request.headers.get("origin") not in ALLOWED_ORIGINS:
+        raise HTTPException(403, "不允许的请求来源")
+    try:
+        return await asyncio.to_thread(prepare, options.mode)
+    except Exception:
+        raise HTTPException(400, "固件或脚本准备失败，请检查本机固件与 Lua 编译结果") from None
+
+
+@app.get("/api/flash/bridge")
+async def flash_bridge_status():
+    return {"paused": app.state.service.bridge.paused.is_set()}
+
+
+@app.post("/api/flash/bridge/{action}")
+async def flash_bridge_control(request: Request, action: Literal["pause", "resume"]):
+    if request.headers.get("origin") not in ALLOWED_ORIGINS:
+        raise HTTPException(403, "不允许的请求来源")
+    service = app.state.service
+    bridge = service.bridge
+    if action == "pause":
+        if (
+            service.calls.active()
+            or (service.device or {}).get("call", {}).get("busy")
+            or any(row["state"] in ("queued", "sending") for row in service.store.list())
+            or service.network_waiter
+            or service.location.waiter
+            or service.usb_network.waiter
+        ):
+            raise HTTPException(409, "请先结束通话并等待短信和设备操作完成")
+        if not bridge.paused.is_set():
+            bridge.released.clear()
+        bridge.paused.set()
+        service.connection.update(connected=False, ready=False, error="browser_flashing")
+        service.broadcast()
+        released = await asyncio.to_thread(bridge.released.wait, 4)
+        if not released:
+            raise HTTPException(503, "串口尚未释放，请稍后再次暂停")
+    else:
+        bridge.paused.clear()
+    return {"paused": bridge.paused.is_set()}
 
 
 @app.get("/api/agent")
