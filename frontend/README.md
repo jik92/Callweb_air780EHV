@@ -1,7 +1,9 @@
 # Air780 设备后台
 
 React + TypeScript + Vite + TanStack Query / Router + Ant Design + Tailwind CSS 4。
-双栏工作台：左侧设备、信号、SIM 信息；右侧收件箱/已发送记录及发送、回复。
+采用 Ant Design Layout / Sider / Header / Content / Footer 标准框架，带可折叠菜单和面包屑。
+菜单支持设备总览、全部短信、收件箱、已发送，和短信筛选状态同步；窄屏自动收起导航。
+内容为双栏工作台：左侧设备、信号、SIM 信息；右侧收件箱/已发送记录及发送、回复。
 不含登录和用户管理；窄屏自动改为上下排列。
 
 ```sh

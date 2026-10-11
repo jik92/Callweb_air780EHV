@@ -37,7 +37,8 @@
 - `frontend/src/tailwind.css` 是唯一样式入口，内容只能为 `@import "tailwindcss";`；这是 Tailwind 编译入口，不得追加手写声明。
 - 可以使用 Ant Design 自带组件样式及 `ConfigProvider` 的主题 token。组件内部生成的样式、Tailwind 编译产物不属于手写业务 CSS。
 - 动态样式选择完整且静态可扫描的类名，如 `active ? 'bg-blue-600' : 'bg-slate-200'`；禁止拼接 `h-[${height}px]`。数据驱动高度等使用明确的类名映射。
-- 保持当前双栏工作台风格：设备和 SIM 信息在左，短信记录及编辑区在右；窄屏上下排列。保持焦点可见、减少动态效果偏好和无横向溢出。
+- 主页面框架使用 Ant Design `Layout / Sider / Header / Content / Footer`，保留可折叠菜单、面包屑以及窄屏自动收起导航。
+- 保持内容区双栏工作台风格：设备和 SIM 信息在左，短信记录及编辑区在右；窄屏上下排列。保持焦点可见、减少动态效果偏好和无横向溢出。
 - Ant Design 的样式覆盖优先使用主题 token；必要时使用 Tailwind 的重要修饰符或任意变体。
 - `npm run check --prefix frontend` 包含样式约束检查，禁止绕过或删除该检查来引入手写样式。
 
