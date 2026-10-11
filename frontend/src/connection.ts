@@ -3,27 +3,6 @@ export const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1 }, mutations: { retry: false } },
 })
 export const stateKey = ['device-state']
-let activeDeviceId = 'local'
-export function devicePath(path: string, deviceId = activeDeviceId) {
-  return deviceId === 'local'
-    ? path
-    : `${path}${path.includes('?') ? '&' : '?'}device_id=${encodeURIComponent(deviceId)}`
-}
-export async function selectDevice(deviceId: string) {
-  if (deviceId === activeDeviceId) return
-  await queryClient.cancelQueries()
-  connection.stop()
-  activeDeviceId = deviceId
-  queryClient.setQueryData(stateKey, {
-    type: 'snapshot',
-    device_id: deviceId,
-    device: null,
-    messages: [],
-    bridge: { connected: false, ready: false, port: null, error: null, last_seen: null },
-  })
-  connection.start()
-  await queryClient.invalidateQueries()
-}
 type Pending = {
   resolve: () => void
   reject: (error: Error) => void
@@ -74,7 +53,7 @@ class Connection {
     if (!this.active) return
     this.setStatus('connecting')
     const socket = new WebSocket(
-      `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${devicePath('/ws')}`,
+      `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`,
     )
     this.socket = socket
     socket.onopen = () => {
@@ -132,7 +111,7 @@ export const connection = new Connection()
 
 export function createCallSocket() {
   const socket = new WebSocket(
-    `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${devicePath('/ws/call')}`,
+    `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/call`,
   )
   socket.binaryType = 'arraybuffer'
   return socket
@@ -160,7 +139,7 @@ export type AgentConfig = {
 }
 export const agentSettingsKey = ['agent-settings']
 async function agentRequest(path: string, init?: RequestInit) {
-  const response = await fetch(devicePath(path), init)
+  const response = await fetch(path, init)
   const data = await response.json()
   if (!response.ok)
     throw new Error(typeof data.detail === 'string' ? data.detail : 'Agent配置请求失败')
@@ -203,7 +182,7 @@ export type DingTalkConfig = {
 }
 export const dingtalkSettingsKey = ['dingtalk-settings']
 async function dingtalkRequest(path: string, init?: RequestInit) {
-  const response = await fetch(devicePath(path), init)
+  const response = await fetch(path, init)
   const data = await response.json()
   if (!response.ok)
     throw new Error(typeof data.detail === 'string' ? data.detail : '钉钉推送配置请求失败')
@@ -226,47 +205,4 @@ export function saveDingTalkSettings(data: {
 }
 export function testDingTalkPush(): Promise<{ message: string }> {
   return dingtalkRequest('/api/dingtalk/test', { method: 'POST' })
-}
-
-export type ManagedDevice = {
-  id: string
-  name: string
-  online: boolean
-  ready: boolean
-  transport: 'usb' | 'websocket'
-  version: string | null
-  last_seen: number | null
-  call_active: boolean
-}
-export const devicesKey = ['devices']
-export async function getDevices(): Promise<ManagedDevice[]> {
-  const response = await fetch('/api/devices')
-  if (!response.ok) throw new Error('无法读取设备列表')
-  return response.json()
-}
-export async function bindDevice(data: { name: string; server_url: string }): Promise<{
-  device_id: string
-  token: string
-  server_url: string
-}> {
-  const response = await fetch('/api/devices', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  })
-  const result = await response.json()
-  if (!response.ok)
-    throw new Error(typeof result.detail === 'string' ? result.detail : '设备绑定失败')
-  return result
-}
-
-export async function getDeviceState() {
-  const response = await fetch(devicePath('/api/state'))
-  if (!response.ok) throw new Error('无法读取服务状态')
-  return response.json()
-}
-export async function getDeviceCallState(): Promise<{ state: string }> {
-  const response = await fetch(devicePath('/api/call'))
-  if (!response.ok) throw new Error('无法确认当前设备通话状态，请稍后重试')
-  return response.json()
 }

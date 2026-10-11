@@ -66,21 +66,16 @@ export default function CallPanel({
   device,
   ready,
   onAnswer,
-  onActivity,
 }: {
   device: Snapshot['device']
   ready: boolean
   onAnswer: () => void
-  onActivity: (active: boolean) => void
 }) {
   const { message } = App.useApp()
   const queryClient = useQueryClient()
   const agentSettings = useQuery({ queryKey: agentSettingsKey, queryFn: getAgentSettings })
   const [form] = Form.useForm()
   const [call, setCall] = useState<CallState>({ state: 'idle' })
-  useEffect(() => {
-    onActivity(!terminal.has(call.state))
-  }, [call.state, onActivity])
   const [connected, setConnected] = useState(false)
   const [socketGeneration, setSocketGeneration] = useState(0)
   const [preparing, setPreparing] = useState(false)
@@ -444,13 +439,9 @@ export default function CallPanel({
             等待接通 · 正在播放本地拨号提示音
           </p>
         )}
-        {!ready ? (
-          <Alert className="mb-4!" type="info" showIcon title="设备连接中，等待通话状态同步" />
-        ) : !device?.call?.live_supported ? (
-          <Alert className="mb-4!" type="warning" showIcon title="当前设备程序不支持实时通话" />
-        ) : !device.call.ready || !device.call.audio_ready ? (
-          <Alert className="mb-4!" type="warning" showIcon title="设备通话音频初始化中" />
-        ) : null}
+        {!device?.call?.live_supported && (
+          <Alert className="mb-4!" type="warning" showIcon title="设备实时通话程序尚未就绪" />
+        )}
         {error && <Alert className="mb-4!" type="error" showIcon title={error} />}
         {call.recording_error && (
           <Alert
@@ -569,7 +560,7 @@ export default function CallPanel({
                 ? call.mode === 'agent'
                   ? 'Agent通话由场景指令控制回复，不使用电脑麦克风或按键音。'
                   : canSendTone
-                    ? '听完语音菜单后点击按键，每个按键持续 400 毫秒。发送期间暂停麦克风声音，静音时仍可使用。'
+                    ? '点击按键向对方发送按键音，可操作“按 1 转人工”等语音菜单。麦克风静音时仍可使用。'
                     : mine.current !== call.call_id
                       ? '请在发起这通电话的页面操作按键。'
                       : '接通并建立音频后即可使用按键。'

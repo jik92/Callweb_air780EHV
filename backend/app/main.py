@@ -19,9 +19,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from .agent_settings import AgentSettings, AgentUpdate
 from .calls import Calls
-from .devices import DeviceBinding, DeviceRegistry, device_socket
 from .dingtalk import DingTalkNotifier, DingTalkSettings, DingTalkUpdate, send_notification
 from .recording import mix
+from .serial_bridge import SerialBridge, available_ports
 from .store import Store
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,8 +33,6 @@ ALLOWED_ORIGINS = {
     "http://localhost:9010",
     "http://127.0.0.1:9010",
 }
-
-ALLOWED_ORIGINS.update(filter(None, os.getenv("AIR780_ALLOWED_ORIGINS", "").split(",")))
 
 
 class Command(BaseModel):
@@ -59,9 +57,8 @@ class Command(BaseModel):
 
 
 class Service:
-    def __init__(self, store: Store, device_id="local"):
+    def __init__(self, store: Store):
         self.store = store
-        self.device_id = device_id
         self.device = None
         self.connection = {"connected": False, "ready": False, "port": None, "error": None}
         self.clients: set[asyncio.Queue] = set()
@@ -89,7 +86,6 @@ class Service:
             device = {**device, "mobile": mobile}
         return {
             "type": "snapshot",
-            "device_id": self.device_id,
             "bridge": {**self.connection, "last_seen": self.last_seen},
             "device": device,
             "messages": self.store.list(),
@@ -169,7 +165,7 @@ class Service:
             if not command.to or command.content is None:
                 raise ValueError("请填写收件号码和短信内容")
         if not self.connection["ready"]:
-            raise ValueError("设备尚未连接，请检查设备 Agent 与 USB 串口")
+            raise ValueError("设备尚未连接，请检查 USB 和串口占用")
         if command.action in ("set_sim_number", "clear_sim_number"):
             mobile = (self.device or {}).get("mobile", {})
             sim_id = mobile.get("iccid")
@@ -204,97 +200,30 @@ class Service:
         return {"type": "command_ack", "request_id": request_id, "duplicate": False}
 
 
-class DeviceManager:
-    def __init__(self, local, directory):
-        self.local = local
-        self.directory = directory
-        self.registry = DeviceRegistry(directory / "devices.sqlite3")
-        self.services = {"local": local}
-        self.tasks = []
-
-    def remote_service(self, device_id):
-        if device_id not in self.services:
-            UUID(device_id)  # Keep per-device paths inside the managed directory.
-            directory = self.directory / "devices" / device_id
-            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-            directory.chmod(0o700)
-            service = Service(Store(directory / "console.sqlite3"), device_id)
-            self.services[device_id] = service
-            self.tasks.extend(
-                [
-                    asyncio.create_task(service.consume()),
-                    asyncio.create_task(service.dingtalk.run()),
-                ]
-            )
-        return self.services[device_id]
-
-    def get(self, device_id):
-        if device_id == "local":
-            return self.local
-        if not any(row["id"] == device_id for row in self.registry.list()):
-            raise HTTPException(404, "设备尚未绑定")
-        return self.remote_service(device_id)
-
-    def list(self):
-        result = []
-        rows = self.registry.list()
-        for row in rows:
-            service = self.services.get(row["id"])
-            connected = bool(service and service.connection["connected"])
-            ready = bool(service and service.connection["ready"])
-            result.append(
-                {
-                    **row,
-                    "online": connected,
-                    "ready": ready,
-                    "transport": "usb" if row["id"] == "local" else "websocket",
-                    "version": (service.device or {}).get("version") if service else None,
-                    "last_seen": service.last_seen
-                    if service and service.last_seen
-                    else row["last_seen"],
-                    "call_active": bool(service and service.calls.active()),
-                }
-            )
-        return sorted(result, key=lambda row: not row["online"])
-
-    async def close(self):
-        for task in self.tasks:
-            task.cancel()
-        await asyncio.gather(*self.tasks, return_exceptions=True)
-        for device_id, service in self.services.items():
-            if device_id == "local":
-                continue
-            agent = service.calls.agent
-            service.calls.close()
-            if agent:
-                await agent.close()
-            service.store.close()
-        self.registry.close()
-
-
-def request_service(request):
-    device_id = request.query_params.get("device_id", "local")
-    return app.state.devices.get(device_id)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await asyncio.to_thread(DATA.mkdir, parents=True, exist_ok=True)
-    lock = (DATA / "api.lock").open("w")
+    lock = (DATA / "serial.lock").open("w")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         lock.close()
-        raise RuntimeError("已有 API 服务运行；相同数据目录只允许一个 worker") from None
+        raise RuntimeError("已有桥接服务运行；串口服务只允许一个 worker") from None
     store = Store(DATA / "console.sqlite3")
     service = Service(store)
     app.state.service = service
-    app.state.devices = DeviceManager(service, DATA)
+    loop = asyncio.get_running_loop()
+    service.bridge = SerialBridge(
+        os.getenv("AIR780_SERIAL_PORT"),
+        lambda event: loop.call_soon_threadsafe(service.events.put_nowait, event),
+    )
     consumer = asyncio.create_task(service.consume())
     notifier = asyncio.create_task(service.dingtalk.run())
+    service.bridge.start()
     try:
         yield
     finally:
+        await asyncio.to_thread(service.bridge.close)
         notifier.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await notifier
@@ -305,12 +234,11 @@ async def lifespan(app: FastAPI):
         service.calls.close()
         if agent:
             await agent.close()
-        await app.state.devices.close()
         store.close()
         lock.close()
 
 
-app = FastAPI(title="智能语音客服 API", lifespan=lifespan)
+app = FastAPI(title="Air780EHV 本地控制台", lifespan=lifespan)
 
 
 @app.exception_handler(RequestValidationError)
@@ -322,35 +250,14 @@ async def validation_error(request: Request, exc: RequestValidationError):
     )
 
 
-@app.get("/api/devices")
-async def devices():
-    return app.state.devices.list()
-
-
-@app.post("/api/devices")
-async def bind_device(request: Request, binding: DeviceBinding):
-    if request.headers.get("origin") not in ALLOWED_ORIGINS:
-        raise HTTPException(403, "不允许的请求来源")
-    try:
-        device_id, token = app.state.devices.registry.bind(binding.name)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from None
-    return {"device_id": device_id, "token": token, "server_url": binding.server_url}
-
-
-@app.websocket("/ws/device")
-async def remote_device_socket(ws: WebSocket):
-    await device_socket(ws, app.state.devices)
-
-
 @app.get("/api/state")
-async def state(request: Request):
-    return request_service(request).snapshot()
+async def state():
+    return app.state.service.snapshot()
 
 
 @app.get("/api/agent")
-async def agent_settings(request: Request):
-    return request_service(request).agent_settings.snapshot()
+async def agent_settings():
+    return app.state.service.agent_settings.snapshot()
 
 
 @app.put("/api/agent")
@@ -358,7 +265,7 @@ async def save_agent_settings(request: Request, update: AgentUpdate):
     if request.headers.get("origin") not in ALLOWED_ORIGINS:
         raise HTTPException(403, "不允许的请求来源")
     try:
-        return request_service(request).agent_settings.save(update)
+        return app.state.service.agent_settings.save(update)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from None
 
@@ -369,7 +276,7 @@ async def test_agent_settings(request: Request):
         raise HTTPException(403, "不允许的请求来源")
     from .realtime_agent import RealtimeAgent
 
-    service = request_service(request)
+    service = app.state.service
     try:
         agent = RealtimeAgent(service.calls, None, None, service.agent_settings.session_config())
         await agent.prepare()
@@ -380,8 +287,8 @@ async def test_agent_settings(request: Request):
 
 
 @app.get("/api/dingtalk")
-async def dingtalk_settings(request: Request):
-    service = request_service(request)
+async def dingtalk_settings():
+    service = app.state.service
     return {**service.dingtalk_settings.snapshot(), "deliveries": service.store.push_list()}
 
 
@@ -389,7 +296,7 @@ async def dingtalk_settings(request: Request):
 async def save_dingtalk_settings(request: Request, update: DingTalkUpdate):
     if request.headers.get("origin") not in ALLOWED_ORIGINS:
         raise HTTPException(403, "不允许的请求来源")
-    service = request_service(request)
+    service = app.state.service
     try:
         data = service.dingtalk_settings.save(update)
     except ValueError as exc:
@@ -401,7 +308,7 @@ async def save_dingtalk_settings(request: Request, update: DingTalkUpdate):
 async def test_dingtalk_settings(request: Request):
     if request.headers.get("origin") not in ALLOWED_ORIGINS:
         raise HTTPException(403, "不允许的请求来源")
-    service = request_service(request)
+    service = app.state.service
     if getattr(service, "dingtalk_test_at", 0) > time.monotonic() - 10:
         raise HTTPException(429, "请等待 10 秒后再测试")
     try:
@@ -418,21 +325,21 @@ async def test_dingtalk_settings(request: Request):
 
 
 @app.get("/api/call")
-async def call_state(request: Request):
-    return request_service(request).calls.state
+async def call_state():
+    return app.state.service.calls.state
 
 
 @app.get("/api/calls")
-async def call_history(request: Request):
-    return request_service(request).store.call_list()
+async def call_history():
+    return app.state.service.store.call_list()
 
 
 recording_lock = asyncio.Lock()
 
 
 @app.get("/api/calls/{call_id}/recording")
-async def call_recording(call_id: UUID, request: Request):
-    store = request_service(request).store
+async def call_recording(call_id: UUID):
+    store = app.state.service.store
     row = store.call_get(str(call_id))
     if not row or row["state"] not in ("ended", "failed", "unknown"):
         raise HTTPException(404, "录音尚不可用")
@@ -453,12 +360,7 @@ async def call_recording(call_id: UUID, request: Request):
 
 @app.get("/api/ports")
 async def ports():
-    return []  # USB enumeration belongs to the local device Agent.
-
-
-@app.get("/api/device-gateway/health")
-async def device_gateway_health():
-    return {"ok": True, "transport": "websocket"}
+    return await asyncio.to_thread(available_ports)
 
 
 @app.get("/api/health")
@@ -471,12 +373,8 @@ async def websocket_endpoint(ws: WebSocket):
     if ws.headers.get("origin") not in ALLOWED_ORIGINS:
         await ws.close(code=1008)
         return
-    try:
-        service = request_service(ws)
-    except HTTPException:
-        await ws.close(code=1008)
-        return
     await ws.accept()
+    service = app.state.service
     events = asyncio.Queue(maxsize=8)
     service.clients.add(events)
     events.put_nowait(service.snapshot())
@@ -514,12 +412,7 @@ async def call_socket(ws: WebSocket):
     if ws.headers.get("origin") not in ALLOWED_ORIGINS:
         await ws.close(code=1008)
         return
-    try:
-        service = request_service(ws)
-    except HTTPException:
-        await ws.close(code=1008)
-        return
-    await service.calls.socket(ws)
+    await app.state.service.calls.socket(ws)
 
 
 if FRONTEND.exists():

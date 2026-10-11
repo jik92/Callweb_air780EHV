@@ -1,5 +1,5 @@
 PROJECT = "air780ehv_sim_query"
-VERSION = "001.999.010"
+VERSION = "001.999.009"
 
 sys = require("sys")
 local call_player = require("call_player")
@@ -60,14 +60,12 @@ local function status()
 end
 
 local function reply(data)
-    local frame = "SMS_START:" .. json.encode(data) .. ":SMS_END\r\n"
-    uart.write(uartid, frame)
+    uart.write(uartid, "SMS_START:" .. json.encode(data) .. ":SMS_END\r\n")
 end
 
 local function audio_reply(id, sequence, rate, pcm)
-    local frame = "AUD_START:" .. id .. string.pack("<I2I2I4", #pcm, rate, sequence)
-        .. pcm .. ":AUD_END"
-    uart.write(uartid, frame)
+    uart.write(uartid, "AUD_START:" .. id .. string.pack("<I2I2I4", #pcm, rate, sequence)
+        .. pcm .. ":AUD_END")
 end
 call_player.init(reply, audio_reply)
 
@@ -126,8 +124,8 @@ local function send_sms(command)
     end)
 end
 
-local function receive(data)
-    buffer = buffer .. data
+uart.on(uartid, "receive", function(id, len)
+    buffer = buffer .. uart.read(id, len)
     while true do
         local command_start = buffer:find("CMD_START:", 1, true)
         local pcm_start = buffer:find("PCM_START:", 1, true)
@@ -183,11 +181,6 @@ local function receive(data)
     end
         end
     if #buffer > 16384 then buffer = "" end
-end
-
-uart.on(uartid, "receive", function(id, len)
-    local data = uart.read(id, len)
-    receive(data)
 end)
 
 sys.taskInit(function()

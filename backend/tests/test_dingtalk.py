@@ -9,7 +9,6 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from support import install_bridge
 
 from app import dingtalk, main
 from app.dingtalk import DingTalkSettings, DingTalkUpdate
@@ -178,7 +177,7 @@ def test_api_origin_privacy_test_and_rate_limit(tmp_path, monkeypatch):
         return "sent", None
 
     monkeypatch.setattr(main, "DATA", tmp_path)
-    install_bridge(monkeypatch, Bridge)
+    monkeypatch.setattr(main, "SerialBridge", Bridge)
     monkeypatch.setattr(main, "send_notification", send)
     headers = {"origin": "http://127.0.0.1:9011"}
     with TestClient(main.app) as client:

@@ -22,8 +22,3 @@ environment.json
 .env
 .env.*
 !.env.example
-
-# Per-device WS login credentials
-lua/remote_config.lua
-
-agent/.venv/

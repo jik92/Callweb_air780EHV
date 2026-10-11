@@ -10,7 +10,6 @@ export interface Sms {
 }
 export interface Snapshot {
   type: 'snapshot'
-  device_id?: string
   bridge: {
     connected: boolean
     ready: boolean
