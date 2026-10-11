@@ -1,0 +1,217 @@
+# Air780EHV macOS LuatOS 开发环境
+
+此项目参考 `../uart_sms_forwarder-main/main.lua`，使用合宙官方 LuatOS Lua API。
+设备程序查询 SIM 和网络信息，并支持按 USB 命令发送短信，通过 USB VUART 返回 JSON。
+
+## 本地环境
+
+- Apple Silicon macOS；`tools/luatos-cli` 1.11.0 原生 ARM64 工具。
+- 官方源码及示例：`sdk/LuatOS/`（稀疏检出，版本见 `environment.json`）。
+- 官方固件：`firmware/LuatOS-SoC_V2052_Air780EHV_13.soc`。
+- Python 虚拟环境：`.venv/`，串口依赖 `pyserial==3.5`。
+- VS Code 已安装 Lua 扩展，项目设置位于 `.vscode/`。
+- 查询程序：`lua/main.lua`；上位机查询：`scripts/device.py`。
+
+## 编译与检查
+
+```sh
+cd /path/to/Callweb_air780EHV
+./scripts/build.sh
+.venv/bin/python scripts/device.py ports
+```
+
+构建生成 `build/script.bin`，使用 LuatOS 的 32 位 Lua 字节码。
+语法、依赖和脚本分区容量由 CLI 检查。
+
+## 烧录
+
+首次使用 LuatOS 或更换底层固件：
+
+```sh
+./scripts/flash.sh
+```
+
+后续仅修改 Lua 脚本：
+
+```sh
+./scripts/flash-script.sh
+```
+
+macOS 上 CLI 的 USB 接口自动选择可能选错端口。如果自动进入下载模式超时，
+按住“下载/BOOT”键，同时复位或重新插入 USB，再松开下载键。
+下载模式通常出现 `/dev/cu.usbmodem0000000000011`（VID/PID `17D1:0001`）；
+实际路径以串口列表为准，可将端口传给烧录脚本：
+
+```sh
+./scripts/flash.sh /dev/cu.usbmodem0000000000011
+```
+
+烧录期间保持 USB 连接，不按按钮。更换底层固件会替换设备当前应用。
+已生成包含本项目脚本的 `build/air780ehv-sim-query.soc`，可用于 LuaTools 全量烧录。
+
+## 读取手机号
+
+烧录并启动后：
+
+```sh
+.venv/bin/python scripts/device.py status
+```
+
+输出 `mobile.number`，以及 SIM 就绪状态、ICCID、IMSI、注册状态和信号。
+查询程序 `001.999.001` 还返回当前 SIM 卡槽、RSSI、RSRP、RSRQ、SNR，
+以及 `mobile.scell()` 返回的服务小区（MCC/MNC、Band、CID、TAC、PCI、EARFCN）。
+这些小区和信号数据反映当前连接的网络，不属于 SIM 卡的固定资料。
+退出码：`0` 已返回号码；`2` 收到状态但号码为空；`1` 没有设备状态响应。
+串口查询兼容参考项目的 `get_status` 协议。
+
+本机实测 USB VUART 为 `/dev/cu.usbmodem0000000000017`，可直接指定：
+
+```sh
+.venv/bin/python scripts/device.py status --port /dev/cu.usbmodem0000000000017
+```
+
+2026-10-11 实机验证：V2052 固件和查询脚本烧录成功；返回本项目名称与版本，
+SIM 就绪、网络状态为 1（已注册）、CSQ 为 31，ICCID 和 IMSI 可读取，手机号为空。
+完整结果在 `logs/luatos-status.json`，成功烧录日志在 `logs/flash-retry.log`。
+这里确认的是接口未返回号码，不能仅据此认定空值的具体原因。
+扩展查询实测：SIM0；服务网络 MCC/MNC 为 460/11，Band 8；
+RSRP -67 dBm，RSRQ -8 dB，SNR 15 dB。这些值会随时间和设备位置变化。
+
+`mobile.number(0)` 只能读取 SIM 中预先存储的号码，必须等 SIM 准备就绪。
+空值并不表示 SIM 不正常，不能由 ICCID、IMSI 推算出手机号。
+若没有存储号码，需要通过运营商账户或其他已授权方式确认后配置。
+
+本机实测 LuatOS 二进制日志口为 `/dev/cu.usbmodem0000000000013`：
+
+```sh
+tools/luatos-cli log view-binary --port /dev/cu.usbmodem0000000000013 --baud 921600 --probe
+```
+
+原始 AT 固件诊断命令（仅适用于运行 AT 固件时）：
+
+```sh
+.venv/bin/python scripts/device.py at --port /dev/cu.usbmodem0000000000013
+```
+
+日志保存在 `logs/`；设备 SIM 信息请留在本机。
+
+## 发送短信
+
+程序 `001.999.002` 在收到明确的 `send_sms` 命令后调用官方
+`sms.sendLong(...).wait()`；上电不会自动发送。
+
+```sh
+.venv/bin/python scripts/send_sms.py \
+  --port /dev/cu.usbmodem0000000000017 \
+  --to <收件号码> --content '<短信内容>'
+```
+
+该命令会实际发送短信。上位机发送一次请求，不自动重试；结果按 request_id 匹配。
+`sent_to_smsc` 表示模块报告提交短信中心成功，不是收件手机的送达确认。
+超时或串口异常时结果为 unknown，需检查日志，避免重复发送。
+每次请求及其结果保存在 `logs/sms-<request_id>.json`。
+
+2026-10-11 实测发送一条中文测试短信，模块返回 `success=true`。
+
+## 读取回复短信
+
+程序 `001.999.003` 使用官方 `sms.setNewSmsCb` 接收短信，将最近 20 条
+保存在设备文件 `/sms_inbox.json`，并通过 USB 推送 `incoming_sms`。
+USB 未连接时也会保存；重新启动会加载保存的记录。
+无法补读在接收回调部署前未被应用保存的短信。
+
+```sh
+# 查看设备保存的收件箱（不会发送短信）
+.venv/bin/python scripts/read_sms.py
+# 查看收件箱并监听新短信 60 秒
+.venv/bin/python scripts/read_sms.py --listen 60
+```
+
+本机读取记录追加到 `logs/sms-inbox.jsonl`，包括发件人、内容和时间信息。
+同一 USB VUART 同时只运行一个查询/发送/监听程序，避免多个进程抢读数据。
+2026-10-11 已实测收到手机回复，设备报告 `saved=true`，随后通过 `get_inbox`
+再次读到相同短信，接收与收件箱查询均正常。
+
+## 官方资料与工具来源
+
+- [官方 LuatOS 源码](https://github.com/openLuat/LuatOS)
+- [Air780EHV 固件](https://docs.openluat.com/air780ehv/luatos/firmware/version/)
+- [mobile.number API](https://docs.openluat.com/osapi/core/mobile/#mobilenumberid)
+- [官方 README 指向的跨平台 CLI](https://gitee.com/openLuat/luatos-cli)
+- [本机 CLI 二进制来源](https://github.com/wendal/luatos-cli/releases/tag/v1.11.0)
+- [CLI 对 Air780EHV 的说明](https://github.com/wendal/luatos-cli/blob/main/docs/models/air9010-ec7xx.md)
+
+## 通话中播报文字
+
+程序 `001.999.007` 使用官方 13 号固件的新音频框架，`cc.dial` 拨号，
+接通且收到 `AUDIO_START` 后通过 `cc.extern_source` 向通话对端播放 TTS。
+上电不会拨号，不自动接听来电。播完等待 2 秒挂断；45 秒未接通挂断，
+单次通话上限 90 秒。现有短信收发功能继续保留。
+
+```sh
+.venv/bin/python scripts/call_tts.py \
+  --port /dev/cu.usbmodem0000000000017 \
+  --to <接听号码> --content '<播报文字>'
+```
+
+此命令会实际拨打一通电话，不自动重试。结果保存在 `logs/call-<request_id>.json`。
+`connected` 表示接通事件，`played` 表示模块收到外部音频解码完成事件，
+无法仅凭模块日志确认对方实际听到的效果。
+
+音频库 `lua/exaudio.lua`、`lua/es8311.lua` 复制自本机官方 SDK，业务代码在
+`lua/call_player.lua`。更换底层固件前已将收件箱备份到
+`logs/inbox-before-call-upgrade.jsonl`。
+参考 [官方通话音频示例](https://docs.openluat.com/air780ehv/luatos/app/volte/audio_play_to_call/)。
+
+### 接收对端语音
+
+加上 `--listen-seconds 30`，播报后继续保持通话 30 秒，采集下行音频。
+使用 `cc.record` 双缓冲，在设备 RAM 中缓存最多 2049010 字节 PCM，
+通话结束后分块导出到本机 WAV（单声道、16 位，8K/16K 由通话质量决定）。
+此实现不转写文字。文件保存在 `logs/call-<request_id>.wav`。
+
+2026-10-11：首通 TTS 通话接通、播报完成、正常挂断，用户确认成功。
+第二通实时音频传输收到 2.82 秒下行录音，但设备重启、录音不完整。
+随后 `001.999.007` 改为通话期间缓存、结束后导出，已编译和部署；
+新缓存方案随后实测接通和播报完成，导出 9.36 秒、16KHz 下行 WAV，
+74 个导出数据块序号连续，无缓冲溢出，设备未重启，结束后查询正常。
+录音保存为 `logs/call-<request_id>.wav`。
+底层固件升级后的收件箱已从升级前备份恢复并读回确认。
+
+## 本机 WebSocket 后台
+
+现已提供 FastAPI 串口桥接服务和 React 双栏后台，使用 uv、Ruff、TanStack Query / Router、Ant Design、Tailwind CSS 4。
+直接启动开发环境：
+
+```sh
+./scripts/dev-console.sh
+```
+
+访问 **http://127.0.0.1:9011**。FastAPI 在 `http://127.0.0.1:9010`，WebSocket 路径 `/ws`。
+启动脚本后台运行两个进程；`./scripts/dev-console.sh stop` 停止，
+`./scripts/dev-console.sh restart` 重启，`./scripts/dev-console.sh status` 查看。
+无登录、无用户管理，服务监听本机。设备状态和短信事件实时推送，页面支持
+SIM 信息读取、刷新、收件箱/发件记录筛选、搜索、发送短信、回复号码自动填入。
+
+底层设备继续使用当前 `001.999.007` 固件，无需重新烧录。
+服务独占 `/dev/cu.usbmodem0000000000017`；停止服务后才运行其他串口工具或烧录。
+可用 `AIR780_SERIAL_PORT` 指定端口。服务与浏览器自动重连，发送请求不自动重试。
+短信记录保存在 `data/console.sqlite3`；页面最多显示最近 500 条，设备最多补读最近 20 条收件。
+
+如只需一个端口提供完整后台，先构建，再启动 FastAPI：
+
+```sh
+npm run build --prefix frontend
+uv run --directory backend uvicorn app.main:app --host 127.0.0.1 --port 9010
+```
+
+此时访问 http://127.0.0.1:9010。检查全部代码：`./scripts/check-console.sh`。
+详细说明见 [后端](backend/README.md) 与 [前端](frontend/README.md)。
+
+2026-10-11 实机联调：从 React 页面通过 WS 发送测试短信到指定号码，模块返回提交成功；
+用户手机回复测试短信，页面无需刷新即显示，SIM 信息读取正常。
+
+服务重启后，已实测 WS 自动恢复、3 条短信记录保留，相同发送请求 ID 返回去重确认。
+测试结果：Ruff、前端格式检查、TypeScript/Vite 构建通过，10 个后端测试通过。
+
+项目开发约定见 [AGENTS.md](AGENTS.md)。前端统一使用 Tailwind，禁止手写原生 CSS 和内联样式，检查脚本已包含样式约束。

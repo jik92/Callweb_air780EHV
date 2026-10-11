@@ -1,0 +1,9 @@
+{
+  "Lua.runtime.version": "Lua 5.3",
+  "Lua.workspace.library": ["${workspaceFolder}/sdk/LuatOS/script/corelib"],
+  "Lua.diagnostics.globals": [
+    "PROJECT", "VERSION", "sys", "log", "mobile", "uart", "json"
+  ],
+  "Lua.workspace.checkThirdParty": false,
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"
+}

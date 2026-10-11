@@ -1,0 +1,17 @@
+[project]
+name = "air780ehv_sim_query"
+chip = "ec7xx"
+version = "001.999.007"
+
+[build]
+script_dirs = ["lua/"]
+script_files = []
+output_dir = "build/"
+use_luac = true
+bitw = 32
+luac_debug = 99
+ignore_deps = false
+soc_script = "latest"
+resource_dir = "resource/"
+
+[flash]

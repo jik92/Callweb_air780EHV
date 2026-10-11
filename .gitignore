@@ -1,0 +1,24 @@
+.venv/
+sdk/
+tools/
+firmware/
+build/
+logs/
+__pycache__/
+
+backend/.venv/
+frontend/node_modules/
+frontend/dist/
+data/
+.pytest_cache/
+.ruff_cache/
+frontend/test-results/
+frontend/playwright-report/
+
+# Local environment, credentials and generated metadata
+environment.json
+.DS_Store
+*.tsbuildinfo
+.env
+.env.*
+!.env.example

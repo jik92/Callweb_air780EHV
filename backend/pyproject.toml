@@ -1,0 +1,20 @@
+[project]
+name = "air780-console"
+version = "0.1.0"
+description = "Local serial to WebSocket bridge for Air780EHV"
+requires-python = ">=3.12"
+dependencies = ["fastapi>=0.115,<1", "uvicorn[standard]>=0.34,<1", "pyserial==3.5"]
+
+[dependency-groups]
+dev = ["ruff>=0.12", "pytest>=8", "httpx>=0.28"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
