@@ -197,7 +197,14 @@ def valid_event(event):
                 for item in messages
             )
         )
-    if kind in ("call_event", "call_result", "call_pcm", "sms_send_result", "sms_send_accepted"):
+    if kind in (
+        "call_accepted",
+        "call_event",
+        "call_result",
+        "call_pcm",
+        "sms_send_result",
+        "sms_send_accepted",
+    ):
         try:
             UUID(event.get("request_id", ""))
         except (ValueError, TypeError, AttributeError):

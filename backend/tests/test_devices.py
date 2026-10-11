@@ -278,3 +278,65 @@ def test_remote_call_answer_and_bidirectional_audio(tmp_path, monkeypatch):
                     }
                 )
             )
+
+
+def test_outgoing_call_acceptance_keeps_device_connected(tmp_path, monkeypatch):
+    from app.devices import valid_event
+
+    assert not valid_event({"type": "call_accepted", "request_id": "invalid"})
+    assert not valid_event({"type": "call_accepted", "request_id": str(uuid4()), "to": []})
+    monkeypatch.setattr(main, "DATA", tmp_path)
+    with TestClient(main.app) as client:
+        bound = client.post("/api/devices", json={"name": "模拟拨号"}, headers=HEADERS).json()
+        device_id = bound["device_id"]
+        with client.websocket_connect("/ws/device") as device:
+            device.send_json({"type": "device_login", **bound})
+            device.receive_json()
+            device.receive_bytes()
+            device.receive_bytes()
+            device.send_bytes(
+                frame(
+                    {
+                        "type": "status_response",
+                        "mobile": {},
+                        "call": {
+                            "ready": True,
+                            "audio_ready": True,
+                            "live_supported": True,
+                        },
+                    }
+                )
+            )
+            wait_ready(client, device_id)
+            with client.websocket_connect(
+                "/ws/call?device_id=" + device_id, headers=HEADERS
+            ) as browser:
+                browser.receive_json()
+                call_id = str(uuid4())
+                browser.send_json({"action": "call_dial", "request_id": call_id, "to": "10000"})
+                command = json.loads(device.receive_bytes()[10:-10])
+                assert command == {"action": "call_live", "request_id": call_id, "to": "10000"}
+                device.send_bytes(
+                    frame({"type": "call_accepted", "request_id": call_id, "to": "10000"})
+                )
+                device.send_bytes(
+                    frame({"type": "call_event", "request_id": call_id, "state": "CONNECTED"})
+                )
+                for _ in range(20):
+                    if browser.receive_json().get("state") == "connected":
+                        break
+                else:
+                    raise AssertionError("Dial acceptance disconnected the device")
+                assert client.get("/api/state", params={"device_id": device_id}).json()["bridge"][
+                    "ready"
+                ]
+                device.send_bytes(
+                    frame(
+                        {
+                            "type": "call_result",
+                            "request_id": call_id,
+                            "connected": True,
+                            "reason": "DISCONNECTED",
+                        }
+                    )
+                )
