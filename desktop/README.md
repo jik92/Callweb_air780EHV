@@ -17,7 +17,7 @@ Electron 封装现有控制台，支持 M4 与其他 Apple Silicon Mac。应用�
 后端，最后创建 arm64 `.app` 与 DMG。
 
 - 应用：`build/mac/mac-arm64/Air780 Console.app`
-- 安装镜像：`build/mac/Air780-Console-0.1.2-arm64.dmg`
+- 安装镜像：`build/mac/Air780-Console-0.1.3-arm64.dmg`
 - 只生成应用目录：`./scripts/build-mac.sh app`
 
 将 DMG 中的应用拖到「应用程序」目录后打开。当前产物用于本机测试，未配置 Apple
@@ -60,3 +60,7 @@ npm run check --prefix desktop
 不烧录。检查封装后端、页面、Web Serial、安全上下文、菜单栏图标，随后退出并释放 9012。
 真实通话、录音和应用内刷写需另行实机验证。
 若已运行正式应用，可在冒烟命令前加 `AIR780_SMOKE_PORT=9015`，使用独立 9xxx 端口验证。
+
+新版包含钉钉 Stream 引用回复：在「短信管理 → 钉钉推送」单独配置应用机器人；群 ID 和用户 ID 可留空以允许全部，
+也可填写 ID 限制范围，开启短信回复，保持 App 与设备在线，即可引用新推送短信并 @ 机器人回复。无需公网端口。
+原自定义机器人仍用于收件推送，应用机器人负责接收 @。完整设置与使用流程见根 README。

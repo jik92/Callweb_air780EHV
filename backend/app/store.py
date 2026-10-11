@@ -42,7 +42,48 @@ class Store:
             "WHERE state IN ('pending','sending')",
             (time.time(),),
         )
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS dingtalk_replies (
+            request_id TEXT PRIMARY KEY, state TEXT NOT NULL, reference TEXT,
+            error TEXT, updated_at REAL NOT NULL)""")
+        self.conn.execute(
+            "UPDATE dingtalk_replies SET state='unknown',error='服务重启，未自动重试',updated_at=? "
+            "WHERE state IN ('claimed','sending','queued')",
+            (time.time(),),
+        )
         self.conn.commit()
+
+    def reply_claim(self, request_id):
+        cursor = self.conn.execute(
+            "INSERT OR IGNORE INTO dingtalk_replies VALUES (?, 'claimed', NULL, NULL, ?)",
+            (request_id, time.time()),
+        )
+        self.conn.commit()
+        return bool(cursor.rowcount)
+
+    def reply_update(self, request_id, state, reference=None, error=None):
+        self.conn.execute(
+            "UPDATE dingtalk_replies SET state=?,reference=COALESCE(?,reference),"
+            "error=?,updated_at=? "
+            "WHERE request_id=?",
+            (state, reference, error, time.time(), request_id),
+        )
+        self.conn.commit()
+
+    def reply_list(self):
+        return [
+            dict(row)
+            for row in self.conn.execute(
+                "SELECT * FROM dingtalk_replies ORDER BY updated_at DESC LIMIT 20"
+            )
+        ]
+
+    def reply_source(self, reference):
+        rows = self.conn.execute(
+            "SELECT m.* FROM messages m JOIN sms_pushes p ON p.message_id=m.id "
+            "WHERE m.direction='incoming' AND p.state='sent' AND substr(m.id,4,16)=? LIMIT 2",
+            (reference,),
+        ).fetchall()
+        return dict(rows[0]) if len(rows) == 1 else None
 
     def sim_number(self, sim_id):
         row = self.conn.execute(

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import DingTalkReplies from './DingTalkReplies'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, App, Button, Checkbox, Form, Input, Spin, Switch, Tag } from 'antd'
 import { BellOutlined, SaveOutlined, SendOutlined } from '@ant-design/icons'
@@ -168,6 +169,7 @@ export default function DingTalkSettings({ visible }: { visible: boolean }) {
           </div>
         </div>
       )}
+      <DingTalkReplies visible={visible} />
     </section>
   )
 }

@@ -155,7 +155,8 @@ class DingTalkNotifier:
                     "%Y-%m-%d %H:%M:%S %z", time.localtime(message["timestamp"])
                 )
                 text = (
-                    f"智能语音客服 · 收到短信\n发送号码：{message['phone']}\n"
+                    f"智能语音客服 · 收到短信\n短信编号：{message['id'][3:19]}\n"
+                    f"发送号码：{message['phone']}\n"
                     f"接收时间：{received}\n短信内容：\n{message['content']}"
                 )
                 state, error = await send_notification(config, text)

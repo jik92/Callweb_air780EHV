@@ -21,6 +21,7 @@ from .agent_settings import AgentSettings, AgentUpdate
 from .bridge_handoff import release_development_bridge
 from .calls import Calls
 from .dingtalk import DingTalkNotifier, DingTalkSettings, DingTalkUpdate, send_notification
+from .dingtalk_reply import DingTalkReplies, ReplyUpdate
 from .flashing import FlashRequest, prepare
 from .location import Location
 from .network_test import NetworkTestRequest, probe
@@ -92,6 +93,7 @@ class Service:
         self.calls = Calls(self)
         self.dingtalk_settings = DingTalkSettings(store.recordings.parent / "dingtalk")
         self.dingtalk = DingTalkNotifier(store, self.dingtalk_settings)
+        self.dingtalk_replies = DingTalkReplies(self)
 
     def snapshot(self):
         device = self.device
@@ -256,9 +258,11 @@ async def lifespan(app: FastAPI):
     consumer = asyncio.create_task(service.consume())
     notifier = asyncio.create_task(service.dingtalk.run())
     service.bridge.start()
+    await service.dingtalk_replies.restart()
     try:
         yield
     finally:
+        await service.dingtalk_replies.close()
         await asyncio.to_thread(service.bridge.close)
         notifier.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -385,6 +389,24 @@ async def save_dingtalk_settings(request: Request, update: DingTalkUpdate):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from None
     return {**data, "deliveries": service.store.push_list()}
+
+
+@app.get("/api/dingtalk/replies")
+async def dingtalk_reply_settings():
+    return app.state.service.dingtalk_replies.snapshot()
+
+
+@app.put("/api/dingtalk/replies")
+async def save_dingtalk_reply_settings(request: Request, update: ReplyUpdate):
+    if request.headers.get("origin") not in ALLOWED_ORIGINS:
+        raise HTTPException(403, "不允许的请求来源")
+    replies = app.state.service.dingtalk_replies
+    try:
+        replies.settings.save(update)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    await replies.restart()
+    return replies.snapshot()
 
 
 @app.post("/api/dingtalk/test")

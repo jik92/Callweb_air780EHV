@@ -156,3 +156,24 @@ Electron 关闭子进程 stdin 时，入口请求 uvicorn 正常退出并执行�
 `AIR780_DESKTOP_INSTANCE` 是启动实例标识，由健康接口返回，供 Electron 确认
 等待的服务属于本次启动；它不是访问凭据。
 构建和运行说明见 [桌面应用文档](../desktop/README.md)。
+
+## 钉钉 Stream 引用回复短信
+
+`GET /api/dingtalk/replies` 读取连接状态、配置是否包含密钥、来源 ID 和最近回复请求；
+`PUT /api/dingtalk/replies` 保存配置并重建接收连接，要求本机页面 Origin。
+字段包含 `enabled`（接收连接）、`allow_sending`（允许实际短信回复）、`client_id`、
+`client_secret`、`conversation_id`、`user_ids` 和 `clear_secret`。
+连接和发送分别授权，默认都关闭；仅连接时可发现群与用户 ID。
+凭据文件 `data/dingtalk/reply.json` 权限为 600，API 不返回密钥。
+
+`conversation_id` 留空允许所有机器人所在群，`user_ids` 为空允许所有群成员；
+非空时分别限制群和 `senderStaffId`。开启 `allow_sending` 前必须开启连接并配置应用凭据。
+仅处理群内 @ 机器人的文本消息，通过原始
+`text.repliedMsg.content.text` 中的短信编号查询本机已成功推送收件。
+引用缺失时接受「回复 16位短信编号 内容」，不猜号码；必须是原 SIM。
+复用 `Service.command` 的 SMS 校验、互斥与请求去重。
+SQLite `dingtalk_replies` 持久化 Stream 请求，重启中的未完请求保持 unknown，不自动重发。
+接收连接可重连，短信与会话回执均不自动重试；结果 submitted 只表示提交短信中心。
+
+协议参考：[官方 Stream SDK](https://github.com/open-dingtalk/dingtalk-stream-sdk-python)。
+本机无需入站公网端口，主动访问钉钉连接接口与安全 WebSocket；会话回执限定钉钉 HTTPS 地址。

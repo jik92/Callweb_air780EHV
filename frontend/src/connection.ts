@@ -275,3 +275,40 @@ export function getFlashBridge(): Promise<{
 export function controlFlashBridge(action: 'pause' | 'resume'): Promise<{ paused: boolean }> {
   return flashRequest(`/api/flash/bridge/${action}`, { method: 'POST' })
 }
+
+export type DingTalkReplyConfig = {
+  enabled: boolean
+  allow_sending: boolean
+  client_id: string
+  conversation_id: string
+  user_ids: string[]
+  has_secret: boolean
+  status: string
+  error: string | null
+  last_sender: { conversation_id: string | null; user_id: string | null } | null
+  requests: {
+    request_id: string
+    reference: string | null
+    state: string
+    error: string | null
+    updated_at: number
+  }[]
+}
+export function getDingTalkReplies(): Promise<DingTalkReplyConfig> {
+  return dingtalkRequest('/api/dingtalk/replies')
+}
+export function saveDingTalkReplies(data: {
+  enabled: boolean
+  allow_sending: boolean
+  client_id: string
+  client_secret?: string
+  conversation_id: string
+  user_ids: string[]
+  clear_secret?: boolean
+}): Promise<DingTalkReplyConfig> {
+  return dingtalkRequest('/api/dingtalk/replies', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
