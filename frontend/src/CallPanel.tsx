@@ -444,9 +444,13 @@ export default function CallPanel({
             等待接通 · 正在播放本地拨号提示音
           </p>
         )}
-        {!device?.call?.live_supported && (
-          <Alert className="mb-4!" type="warning" showIcon title="设备实时通话程序尚未就绪" />
-        )}
+        {!ready ? (
+          <Alert className="mb-4!" type="info" showIcon title="设备连接中，等待通话状态同步" />
+        ) : !device?.call?.live_supported ? (
+          <Alert className="mb-4!" type="warning" showIcon title="当前设备程序不支持实时通话" />
+        ) : !device.call.ready || !device.call.audio_ready ? (
+          <Alert className="mb-4!" type="warning" showIcon title="设备通话音频初始化中" />
+        ) : null}
         {error && <Alert className="mb-4!" type="error" showIcon title={error} />}
         {call.recording_error && (
           <Alert
