@@ -38,7 +38,7 @@ export default function DeviceManagement({
       setBinding(false)
       form.resetFields()
       void queryClient.invalidateQueries({ queryKey: devicesKey })
-      message.success('设备已绑定，写入配置并联网后显示在线')
+      message.success('设备已绑定，启动本地设备 Agent 后显示在线')
     },
     onError: (error) => message.error(error.message),
   })
@@ -48,11 +48,11 @@ export default function DeviceManagement({
   )
   function download() {
     if (!provision) return
-    const content = `-- 此配置包含设备专属凭据，请仅写入对应设备。\nreturn {\n  url = ${JSON.stringify(provision.server_url)},\n  device_id = ${JSON.stringify(provision.device_id)},\n  token = ${JSON.stringify(provision.token)},\n}\n`
+    const content = JSON.stringify({ ...provision, serial_port: null }, null, 2) + '\n'
     const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }))
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = 'remote_config.lua'
+    anchor.download = 'device-agent.json'
     anchor.click()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
@@ -99,7 +99,7 @@ export default function DeviceManagement({
             search
               ? '没有匹配的设备'
               : filter === '在线设备'
-                ? '暂无在线设备，绑定并联网后会在这里显示'
+                ? '暂无在线设备，启动设备 Agent 后会在这里显示'
                 : '暂无绑定设备'
           }
         />
@@ -128,7 +128,9 @@ export default function DeviceManagement({
               </div>
               <p className="mb-3 break-all font-mono text-xs text-slate-400">{device.id}</p>
               <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-500">
-                <span>{device.transport === 'websocket' ? '远程 WS 设备' : '本机 USB 设备'}</span>
+                <span>
+                  {device.transport === 'websocket' ? 'USB · 设备 Agent' : '本机 USB 设备'}
+                </span>
                 <span>版本 {device.version || '—'}</span>
                 {device.call_active && <span className="text-blue-600">设备有通话</span>}
               </div>
@@ -154,7 +156,7 @@ export default function DeviceManagement({
         footer={null}
       >
         <p className="text-sm leading-6 text-slate-500">
-          为每台设备创建独立绑定。保存后下载配置文件并写入对应设备，设备将通过 WS 登录后台。
+          为每台 USB 设备创建独立绑定。下载配置，在连接设备的电脑启动设备 Agent，通过 WS 登录 API。
         </p>
         <Form
           form={form}
@@ -173,7 +175,7 @@ export default function DeviceManagement({
             name="server_url"
             label="服务器 WS 地址"
             rules={[{ required: true, message: '请输入部署后的设备连接地址' }]}
-            extra="公网使用 WSS 域名；本机联调可填写 ws://127.0.0.1:9010/ws/device。"
+            extra="支持 WS 与 WSS，推荐使用 WSS；地址路径为 /ws/device。"
           >
             <Input placeholder="wss://你的域名/ws/device" maxLength={500} />
           </Form.Item>
@@ -195,11 +197,11 @@ export default function DeviceManagement({
           type="success"
           showIcon
           title="绑定已创建，等待设备登录"
-          description="配置文件包含本台设备的独立登录凭据，仅在本次创建时提供。请下载并放入设备脚本目录，再编译部署。"
+          description="配置包含设备的独立登录凭据，仅在本次创建时提供。请下载到连接 USB 的电脑，使用此配置启动设备 Agent。"
         />
         <p className="break-all font-mono text-xs text-slate-500">{provision?.device_id}</p>
         <Button type="primary" icon={<DownloadOutlined />} onClick={download}>
-          下载 remote_config.lua
+          下载 device-agent.json
         </Button>
       </Modal>
     </section>

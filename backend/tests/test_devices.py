@@ -42,13 +42,14 @@ def test_registry_credentials_and_restart(tmp_path):
     assert registry.authenticate(device_id, token)
     registry.close()
     for url in (
-        "ws://public.example/ws/device",
+        "http://public.example/ws/device",
         "wss://example.org/ws",
         "wss://example.org/ws/device?token=bad",
     ):
         with pytest.raises(ValidationError):
             DeviceBinding(name="测试", server_url=url)
     assert DeviceBinding(name="测试", server_url="wss://example.org/ws/device")
+    assert DeviceBinding(name="测试", server_url="ws://example.org/ws/device")
 
 
 def wait_ready(client, device_id):
@@ -61,7 +62,6 @@ def wait_ready(client, device_id):
 
 def test_remote_login_two_device_isolation_routing_and_reconnect(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "DATA", tmp_path)
-    monkeypatch.setattr(main, "SerialBridge", Bridge)
     with TestClient(main.app) as client, ExitStack() as stack:
         assert client.post("/api/devices", json={"name": "一"}).status_code == 403
         bound = [
@@ -151,7 +151,7 @@ def test_remote_login_two_device_isolation_routing_and_reconnect(tmp_path, monke
         assert client.get("/api/state", params={"device_id": "not-bound"}).status_code == 404
     # The binding survives backend restart; unsent work is never replayed.
     with TestClient(main.app) as client:
-        assert len(client.get("/api/devices").json()) == 3
+        assert len(client.get("/api/devices").json()) == 2
         with client.websocket_connect("/ws/device") as ws:
             ws.send_json({"type": "device_login", **bound[0]})
             assert ws.receive_json()["type"] == "device_login_ok"
@@ -163,7 +163,6 @@ def test_remote_login_two_device_isolation_routing_and_reconnect(tmp_path, monke
 
 def test_unknown_wrong_token_and_malformed_event_are_rejected(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "DATA", tmp_path)
-    monkeypatch.setattr(main, "SerialBridge", Bridge)
     with TestClient(main.app) as client:
         bound = client.post("/api/devices", json={"name": "测试"}, headers=HEADERS).json()
         for login in (
@@ -193,8 +192,9 @@ def test_remote_only_server_does_not_open_usb(tmp_path, monkeypatch):
             raise AssertionError("remote-only server closed unstarted bridge")
 
     monkeypatch.setattr(main, "DATA", tmp_path)
-    monkeypatch.setattr(main, "SerialBridge", NoUsb)
-    monkeypatch.setenv("AIR780_ENABLE_LOCAL_SERIAL", "0")
+    from app import serial_bridge
+
+    monkeypatch.setattr(serial_bridge, "SerialBridge", NoUsb)
     with TestClient(main.app) as client:
         assert client.get("/api/devices").json() == []
 
@@ -205,7 +205,6 @@ def test_remote_call_answer_and_bidirectional_audio(tmp_path, monkeypatch):
     from app.protocol import AUDIO_END, AUDIO_START, encode_audio_input
 
     monkeypatch.setattr(main, "DATA", tmp_path)
-    monkeypatch.setattr(main, "SerialBridge", Bridge)
     with TestClient(main.app) as client:
         bound = client.post("/api/devices", json={"name": "模拟通话"}, headers=HEADERS).json()
         device_id = bound["device_id"]

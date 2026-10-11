@@ -1,0 +1,6 @@
+[project]
+name = "callweb-usb-agent"
+version = "0.1.0"
+description = "Small USB serial device bridge to the Callweb API"
+requires-python = ">=3.12"
+dependencies = ["pyserial==3.5", "websockets>=15,<17"]

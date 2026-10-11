@@ -3,7 +3,6 @@ VERSION = "001.999.010"
 
 sys = require("sys")
 local call_player = require("call_player")
-local remote = require("remote_console")
 local uartid = uart.VUART_0
 local buffer = ""
 local sms_ready = false
@@ -62,13 +61,13 @@ end
 
 local function reply(data)
     local frame = "SMS_START:" .. json.encode(data) .. ":SMS_END\r\n"
-    if remote.enabled() then remote.send(frame) else uart.write(uartid, frame) end
+    uart.write(uartid, frame)
 end
 
 local function audio_reply(id, sequence, rate, pcm)
     local frame = "AUD_START:" .. id .. string.pack("<I2I2I4", #pcm, rate, sequence)
         .. pcm .. ":AUD_END"
-    if remote.enabled() then remote.send(frame, true) else uart.write(uartid, frame) end
+    uart.write(uartid, frame)
 end
 call_player.init(reply, audio_reply)
 
@@ -188,11 +187,7 @@ end
 
 uart.on(uartid, "receive", function(id, len)
     local data = uart.read(id, len)
-    if not remote.enabled() then receive(data) end
-end)
-remote.init(receive, function()
-    buffer = ""
-    call_player.network_lost()
+    receive(data)
 end)
 
 sys.taskInit(function()

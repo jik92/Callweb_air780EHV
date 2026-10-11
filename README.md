@@ -277,34 +277,68 @@ Agent仅进行语音回复，不授予工具或业务执行权限。
 
 凭据仅保存在忽略目录 `data/dingtalk/settings.json`（目录 700、文件 600），页面仅显示是否已配置，不回传密钥。Webhook 固定允许钉钉官方 HTTPS 机器人地址；写入和测试接口检查本机页面 Origin。无需修改或烧录设备脚本。
 
-## 多设备网络控制台
+## USB Agent 与 API 多设备架构
 
-「设备管理」默认展示已登录的在线设备，可切换到全部绑定、搜索并选择设备进入总览。
-通话、短信记录、录音、AGENT.md 和钉钉推送设置按设备保存；切换普通菜单保持现有连接，
-通话期间禁止切换设备。原本的本机 USB 数据和设置继续保留。
+设备只运行 USB 业务脚本。连接设备的电脑运行轻量 **设备 Agent**，通过 WS
+主动连接 **API**；API 可以在本机或部署到公网。设备 Agent 与语音客服的
+AGENT.md/Realtime Agent 是不同的服务。
 
-1. 在「设备管理 → 绑定设备」填写名称和 `wss://你的域名/ws/device`。
-2. 下载一次性提供的 `remote_config.lua`，放入对应设备的 `lua/` 目录并烧录脚本。
-3. 设备通过 4G 联网，使用独立设备 ID 与令牌登录；重启服务后绑定仍然有效。
-
-`remote_config.lua` 包含设备凭据，已加入忽略规则。没有该文件时仍使用 USB 协议。
-配置网络模式后设备通过 WS 接收命令和回传二进制音频，USB 仅用于供电、日志和烧录。
-断线清空命令和音频队列，设备结束活动通话；重连只查询状态和收件箱，不重放拨号或短信。
-
-只管理远程设备的服务无需打开串口：
-
-```sh
-AIR780_ENABLE_LOCAL_SERIAL=0 ./scripts/dev-console.sh start
+```text
+Air780EHV ← USB 串口/音频 → 设备 Agent ← WS/WSS → API ← HTTP/WS → 管理页面
+                                               ├ SQLite / 录音
+                                               ├ OpenAI Realtime / AGENT.md
+                                               └ 钉钉短信推送
 ```
 
-公网反向代理应只开放 `/ws/device` 和 `/api/device-gateway/health`；
-管理页面及浏览器 `/ws`、`/ws/call` 保持本机访问。
-需要发布管理页面时，另行配置受保护入口，并通过 `AIR780_ALLOWED_ORIGINS`
-设置允许的页面来源（逗号分隔）。当前控制台仍无需用户登录，不宜直接公开全部 API。
+- `agent/`：独立 uv 项目，仅依赖 pyserial 和 websockets，不依赖 FastAPI。
+  每个进程管理一台设备，独占对应串口；多设备配置明确指定不同串口。
+- `backend/app/`：API、设备绑定、短信去重与存储、录音、Realtime 和钉钉。
+  API 不枚举、不打开串口，也不负责烧录。
+- `lua/`：恢复 USB 命令及二进制音频，不含公网地址和设备绑定令牌。
 
-本次本机 FRP 联调使用独立服务器服务 `frps-call-test`、控制端口 9700，
-SSH 本机转发 9701，以及私网代理端口 9900 → 本机 9010。
-私有配置放在忽略的 `data/frp/frpc.toml`，FRP 二进制放在 `tools/frp/frpc`：
+「设备管理」默认展示已登录的在线设备。点击设备进入总览，通话、短信、录音、
+AGENT.md 与钉钉设置按绑定隔离；切换普通菜单保持连接，通话时禁止切换设备。
+已有本机 USB 数据和设置保留在原数据目录。
+
+### 启动和绑定
+
+```sh
+./scripts/dev-console.sh start     # API 9010 + 页面 9011
+```
+
+1. 打开设备管理 → 绑定设备，填写名称和 API 地址：
+   本机 `ws://127.0.0.1:9010/ws/device`，公网 `wss://你的域名/ws/device`。
+2. 下载 `device-agent.json` 到连接 USB 的电脑。配置含独立令牌，只提供一次。
+3. 配置 `serial_port` 为实际应用协议串口；设为 `null` 时自动选择本机 Air780 VUART。
+4. 启动设备 Agent：
+
+```sh
+./scripts/dev-agent.sh start --config /path/to/device-agent.json
+./scripts/dev-agent.sh status --config /path/to/device-agent.json
+./scripts/dev-agent.sh stop --config /path/to/device-agent.json
+./scripts/dev-agent.sh restart --config /path/to/device-agent.json
+
+# 查看本机串口，不需要访问 API
+uv run --project agent python agent/usb_agent.py --list-ports
+
+# 也可在连接设备的另一台电脑直接以前台进程运行
+uv run --project agent python agent/usb_agent.py --config /path/to/device-agent.json
+```
+
+管理脚本按绑定 ID、PID 和进程启动时间识别自己的进程。停止 API 不会停止 Agent；
+Agent 自动重连，但不会重放短信、拨号和音频。网络断线会取消串口待发送队列，
+对本进程已接听/拨出的活动通话发送挂断，然后释放串口。短信结果仍以模块报告为准，
+断线时未知结果保留为 unknown，不自动重试。
+
+烧录前停止对应设备 Agent，烧录完成后重新启动；保持一个进程读取一个应用串口。
+配置、凭据、日志与本机数据放入忽略的 `data/` / `logs/`，不提交到仓库。
+测试环境可在配置中加 `connect_host` 指定连接 IP，域名仍用于 TLS 校验；一般部署不需要。
+
+### 公网与 FRP 测试
+
+公网设备接入域名为 `call-api.ounirobot.com`。当前 FRP 将服务器私网端口 9900
+转发到本机 API 9010，使用独立服务 frps-call-test、控制端口 9700 和本机 SSH 转发 9701。
+私有配置放在 `data/frp/frpc.toml`，二进制放在 `tools/frp/frpc`。
 
 ```sh
 python3 scripts/dev-tunnel.py start
@@ -312,5 +346,6 @@ python3 scripts/dev-tunnel.py status
 python3 scripts/dev-tunnel.py stop
 ```
 
-该脚本只按 PID 和启动时间管理自己创建的 SSH/FRP 进程。公网域名的 TLS 证书
-通过独立 HTTP 验证申请，服务器 Certbot 负责续期并更新 Traefik 使用的证书。
+公网只开放 `/ws/device` 和 `/api/device-gateway/health`。管理页面与浏览器
+`/ws`、`/ws/call` 仍在本机；将来发布管理页面时配置受保护入口与
+`AIR780_ALLOWED_ORIGINS`（允许来源用逗号分隔）。TLS 由 Traefik 提供，Certbot 自动续期。

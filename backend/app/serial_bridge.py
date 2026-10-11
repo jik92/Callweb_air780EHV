@@ -95,7 +95,11 @@ class SerialBridge:
                             conn.write(encode_command(command))
                             conn.flush()
                             self.emit(
-                                {"type": "command_written", "request_id": command.get("request_id")}
+                                {
+                                    "type": "command_written",
+                                    "request_id": command.get("request_id"),
+                                    "action": command.get("action"),
+                                }
                             )
                         for _ in range(4):
                             try:

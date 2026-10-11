@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from support import install_bridge
 
 from app import main, recording
 from app.main import Service
@@ -127,7 +128,7 @@ def test_history_and_recording_http_end_to_end(tmp_path, monkeypatch):
             return False
 
     monkeypatch.setattr(main, "DATA", tmp_path)
-    monkeypatch.setattr(main, "SerialBridge", Bridge)
+    install_bridge(monkeypatch, Bridge)
     with TestClient(main.app) as client:
         with client.websocket_connect("/ws", headers={"origin": "http://localhost:9011"}) as ws:
             while not ws.receive_json()["bridge"]["ready"]:

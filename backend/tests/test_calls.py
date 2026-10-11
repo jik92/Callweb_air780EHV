@@ -3,6 +3,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from support import install_bridge
 
 from app import main
 from app.main import Service
@@ -141,7 +142,7 @@ def test_audio_websocket_roundtrip_and_disconnect(tmp_path, monkeypatch):
             return False
 
     monkeypatch.setattr(main, "DATA", tmp_path)
-    monkeypatch.setattr(main, "SerialBridge", FakeBridge)
+    install_bridge(monkeypatch, FakeBridge)
     with TestClient(main.app) as client:
         with client.websocket_connect("/ws", headers={"origin": "http://localhost:9011"}) as state:
             while not state.receive_json()["bridge"]["ready"]:

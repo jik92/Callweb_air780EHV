@@ -7,6 +7,7 @@ from uuid import uuid4
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
+from support import install_bridge
 
 from app import main, realtime_agent
 from app.agent_settings import AgentSettings, AgentUpdate
@@ -231,7 +232,7 @@ def test_agent_api_masks_keys_and_checks_origin(tmp_path, monkeypatch):
             pass
 
     monkeypatch.setattr(main, "DATA", tmp_path)
-    monkeypatch.setattr(main, "SerialBridge", Bridge)
+    install_bridge(monkeypatch, Bridge)
     with TestClient(main.app) as client:
         assert client.put("/api/agent", json={}).status_code == 403
         headers = {"origin": "http://127.0.0.1:9011"}
@@ -270,7 +271,7 @@ def test_websocket_disconnect_during_agent_setup_does_not_accept(tmp_path, monke
         await asyncio.Future()
 
     monkeypatch.setattr(main, "DATA", tmp_path)
-    monkeypatch.setattr(main, "SerialBridge", Bridge)
+    install_bridge(monkeypatch, Bridge)
     monkeypatch.setattr(realtime_agent, "connect", blocked)
     with TestClient(main.app) as client:
         main.app.state.service.agent_settings.save(AgentUpdate(enabled=True, api_key="test-key"))

@@ -39,9 +39,8 @@ class DeviceBinding(BaseModel):
         if not value:
             return value
         parts = urlsplit(value)
-        local = parts.hostname in ("127.0.0.1", "localhost")
         if (
-            (parts.scheme != "wss" and not (local and parts.scheme == "ws"))
+            parts.scheme not in ("ws", "wss")
             or not parts.hostname
             or parts.path != "/ws/device"
             or parts.query
@@ -49,9 +48,7 @@ class DeviceBinding(BaseModel):
             or parts.username
             or parts.password
         ):
-            raise ValueError(
-                "请填写 wss://公网域名/ws/device，本机测试可用 ws://127.0.0.1:9010/ws/device"
-            )
+            raise ValueError("请填写 ws://或wss://域名/ws/device")
         return value
 
 
@@ -252,8 +249,10 @@ async def device_socket(ws: WebSocket, manager):
             return
         bridge = RemoteBridge(ws)
         service.bridge = bridge
+        port = login.get("serial_port")
+        port = f"设备 Agent · {port}" if isinstance(port, str) and len(port) <= 200 else "WebSocket"
         # Apply transport transition before the reader can enqueue any device data.
-        service.events.put_nowait({"type": "transport", "connected": True, "port": "WebSocket"})
+        service.events.put_nowait({"type": "transport", "connected": True, "port": port})
         await ws.send_json({"type": "device_login_ok", "device_id": login["device_id"]})
         manager.registry.touch(login["device_id"])
         writer = asyncio.create_task(bridge.writer(service))

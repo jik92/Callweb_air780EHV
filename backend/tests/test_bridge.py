@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from support import install_bridge
 
 from app import main
 from app.main import Command, Service
@@ -137,7 +138,7 @@ def test_websocket_sim_sms_and_multiclient(tmp_path, monkeypatch):
                 )
 
     monkeypatch.setattr(main, "DATA", tmp_path)
-    monkeypatch.setattr(main, "SerialBridge", FakeBridge)
+    install_bridge(monkeypatch, FakeBridge)
     with TestClient(main.app) as client:
         with client.websocket_connect("/ws", headers={"origin": "http://localhost:9011"}) as first:
             initial = first.receive_json()

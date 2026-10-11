@@ -10,7 +10,6 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "numpy" },
-    { name = "pyserial" },
     { name = "soxr" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockets" },
@@ -19,6 +18,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "httpx" },
+    { name = "pyserial" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -28,7 +28,6 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "numpy", specifier = ">=2,<3" },
-    { name = "pyserial", specifier = "==3.5" },
     { name = "soxr", specifier = ">=0.5,<1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34,<1" },
     { name = "websockets", specifier = ">=15,<17" },
@@ -37,6 +36,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "pyserial", specifier = "==3.5" },
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.12" },
 ]

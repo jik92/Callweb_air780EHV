@@ -22,7 +22,6 @@ from .calls import Calls
 from .devices import DeviceBinding, DeviceRegistry, device_socket
 from .dingtalk import DingTalkNotifier, DingTalkSettings, DingTalkUpdate, send_notification
 from .recording import mix
-from .serial_bridge import SerialBridge, available_ports
 from .store import Store
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -170,7 +169,7 @@ class Service:
             if not command.to or command.content is None:
                 raise ValueError("请填写收件号码和短信内容")
         if not self.connection["ready"]:
-            raise ValueError("设备尚未连接，请检查 USB 和串口占用")
+            raise ValueError("设备尚未连接，请检查设备 Agent 与 USB 串口")
         if command.action in ("set_sim_number", "clear_sim_number"):
             mobile = (self.device or {}).get("mobile", {})
             sim_id = mobile.get("iccid")
@@ -239,10 +238,6 @@ class DeviceManager:
     def list(self):
         result = []
         rows = self.registry.list()
-        if os.getenv("AIR780_ENABLE_LOCAL_SERIAL", "1") != "0":
-            rows.insert(
-                0, {"id": "local", "name": "本机 USB 设备", "last_seen": self.local.last_seen}
-            )
         for row in rows:
             service = self.services.get(row["id"])
             connected = bool(service and service.connection["connected"])
@@ -285,31 +280,21 @@ def request_service(request):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await asyncio.to_thread(DATA.mkdir, parents=True, exist_ok=True)
-    lock = (DATA / "serial.lock").open("w")
+    lock = (DATA / "api.lock").open("w")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         lock.close()
-        raise RuntimeError("已有桥接服务运行；串口服务只允许一个 worker") from None
+        raise RuntimeError("已有 API 服务运行；相同数据目录只允许一个 worker") from None
     store = Store(DATA / "console.sqlite3")
     service = Service(store)
     app.state.service = service
     app.state.devices = DeviceManager(service, DATA)
-    loop = asyncio.get_running_loop()
-    service.bridge = SerialBridge(
-        os.getenv("AIR780_SERIAL_PORT"),
-        lambda event: loop.call_soon_threadsafe(service.events.put_nowait, event),
-    )
     consumer = asyncio.create_task(service.consume())
     notifier = asyncio.create_task(service.dingtalk.run())
-    local_enabled = os.getenv("AIR780_ENABLE_LOCAL_SERIAL", "1") != "0"
-    if local_enabled:
-        service.bridge.start()
     try:
         yield
     finally:
-        if local_enabled:
-            await asyncio.to_thread(service.bridge.close)
         notifier.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await notifier
@@ -325,7 +310,7 @@ async def lifespan(app: FastAPI):
         lock.close()
 
 
-app = FastAPI(title="Air780EHV 本地控制台", lifespan=lifespan)
+app = FastAPI(title="智能语音客服 API", lifespan=lifespan)
 
 
 @app.exception_handler(RequestValidationError)
@@ -468,7 +453,7 @@ async def call_recording(call_id: UUID, request: Request):
 
 @app.get("/api/ports")
 async def ports():
-    return await asyncio.to_thread(available_ports)
+    return []  # USB enumeration belongs to the local device Agent.
 
 
 @app.get("/api/device-gateway/health")
