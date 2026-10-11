@@ -58,11 +58,13 @@ def test_network_probe_uses_device_and_survives_late_results(tmp_path):
                     "request_id": commands[0]["request_id"],
                     "reachable": True,
                     "status_code": 405,
+                    "method": "GET",
                     "elapsed_ms": 100,
                 }
             )
             result = await asyncio.wait_for(task, 1)
             assert result["source"] == "device_4g" and result["status_code"] == 405
+            assert result["method"] == "GET"
             assert commands[0]["action"] == "network_test"
             assert service.network_waiter is None
             task = asyncio.create_task(probe(service, request))

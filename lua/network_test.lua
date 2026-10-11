@@ -18,14 +18,15 @@ function M.start(command, reply, call_status)
     sys.taskInit(function()
         local started = mcu.ticks()
         local ok, result = pcall(function()
-            if not socket.isReady(socket.LWIP_GP) then
+            if not socket.adapter(socket.LWIP_GP) then
                 sys.waitUntil("IP_READY", 5000)
             end
-            if not socket.isReady(socket.LWIP_GP) then
+            if not socket.adapter(socket.LWIP_GP) then
                 return {reachable=false, error="4G 数据网络未就绪"}
             end
-            local code, headers = http.request("HEAD", url, nil, nil,
-                {timeout=15000, adapter=socket.LWIP_GP}).wait()
+            -- V2052 rejects HEAD before connecting. Keep the GET body out of Lua RAM.
+            local code, headers = http.request("GET", url, {Range="bytes=0-1023"}, nil,
+                {timeout=15000, adapter=socket.LWIP_GP, dst="/network_test_response.tmp"}).wait()
             local selected = {}
             for key, value in pairs(headers or {}) do
                 local lower = tostring(key):lower()
@@ -37,9 +38,11 @@ function M.start(command, reply, call_status)
                 status_code=code, headers=selected,
                 error=(not code or code<100) and "设备 HTTP 请求失败，错误码："..tostring(code) or nil}
         end)
+        os.remove("/network_test_response.tmp")
         busy = false
         if not ok then result = {reachable=false, error="设备网络测试异常"} end
         result.type = "network_test_result"
+        result.method = "GET"
         result.request_id = id
         result.elapsed_ms = (mcu.ticks() - started) % 4294967296
         reply(result)

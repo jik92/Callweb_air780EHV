@@ -41,6 +41,7 @@ import CallPanel from './CallPanel'
 import AgentSettings from './AgentSettings'
 import DingTalkSettings from './DingTalkSettings'
 import NetworkTest from './NetworkTest'
+import DeviceLocation from './DeviceLocation'
 import { connection, stateKey } from './connection'
 import type { Sms, Snapshot } from './types'
 
@@ -333,6 +334,12 @@ export default function Console() {
                 <Info label="串口" value={data?.bridge.port?.replace('/dev/', '')} />
                 <Info label="应用版本" value={data?.device?.version} />
                 <Info label="最近更新" value={time(data?.bridge.last_seen ?? null)} />
+                <DeviceLocation
+                  location={data?.location}
+                  ready={ready}
+                  supported={data?.device?.location_supported === true}
+                  callBusy={data?.device?.call?.busy === true}
+                />
                 <Button
                   className="mt-4 h-[38px]!"
                   block

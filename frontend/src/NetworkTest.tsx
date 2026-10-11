@@ -10,7 +10,8 @@ export default function NetworkTest({ ready, supported }: { ready: boolean; supp
     <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-6 max-[740px]:p-4">
       <h2 className="mt-0 text-lg font-semibold">网络测试</h2>
       <p className="text-sm leading-6 text-slate-500">
-        使用设备 SIM 卡的 4G 网络访问目标地址，发送 HEAD 请求检查连接和响应。不下载网页正文。
+        使用设备 SIM 卡的 4G 网络发送 GET 请求，检查连接和响应。请求前 1024
+        字节，响应正文不展示，测试后清理。
       </p>
       {!ready ? (
         <Alert className="mb-4!" type="info" showIcon title="请先连接设备" />
@@ -63,7 +64,9 @@ export default function NetworkTest({ ready, supported }: { ready: boolean; supp
           <Tag color={result.reachable ? 'green' : 'red'}>
             {result.reachable ? '已收到 HTTP 响应' : '网络访问失败'}
           </Tag>
-          <p className="m-0 text-sm">设备 4G · HEAD · {result.url}</p>
+          <p className="m-0 text-sm">
+            设备 4G · {result.method} · {result.url}
+          </p>
           <p className="m-0 text-sm">
             响应状态：{result.status_code ?? '—'} · 耗时：{result.elapsed_ms} ms
           </p>
@@ -74,7 +77,7 @@ export default function NetworkTest({ ready, supported }: { ready: boolean; supp
             </p>
           ))}
           <p className="m-0 text-xs text-slate-500">
-            HTTP 4xx/5xx 表示服务器已响应；部分站点不接受 HEAD 请求。
+            HTTP 4xx/5xx 表示服务器已响应；负数为设备请求错误码。服务器可能忽略字节范围请求。
           </p>
         </div>
       )}

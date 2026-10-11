@@ -21,6 +21,7 @@ export interface Snapshot {
     project: string
     version: string
     network_test_supported?: boolean
+    location_supported?: boolean
     call?: { ready: boolean; audio_ready: boolean; busy: boolean; live_supported?: boolean }
     mobile: {
       sim_ready: boolean
@@ -42,4 +43,15 @@ export interface Snapshot {
     }
   } | null
   messages: Sms[]
+  location?: DeviceLocation
+}
+
+export interface DeviceLocation {
+  state: 'idle' | 'locating' | 'resolving' | 'ready' | 'partial' | 'failed'
+  latitude?: number
+  longitude?: number
+  coordinate_system?: 'WGS84'
+  address?: string
+  located_at?: number
+  error?: string
 }

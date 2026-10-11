@@ -44,6 +44,8 @@ async def probe(service, request):
         raise HTTPException(409, "请结束通话后再测试网络")
     if service.network_waiter is not None:
         raise HTTPException(409, "已有网络测试进行中")
+    if service.location.waiter is not None:
+        raise HTTPException(409, "请等待基站定位完成")
     request_id = str(uuid4())
     future = asyncio.get_running_loop().create_future()
     service.network_waiter = (request_id, future)
@@ -52,7 +54,12 @@ async def probe(service, request):
             {"action": "network_test", "request_id": request_id, "url": request.url}
         )
         result = await asyncio.wait_for(future, 25)
-        return {**result, "url": request.url, "method": "HEAD", "source": "device_4g"}
+        return {
+            **result,
+            "url": request.url,
+            "method": result.get("method", "HEAD"),
+            "source": "device_4g",
+        }
     except queue.Full:
         raise HTTPException(503, "设备命令队列已满") from None
     except TimeoutError:

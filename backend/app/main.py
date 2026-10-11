@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from .agent_settings import AgentSettings, AgentUpdate
 from .calls import Calls
 from .dingtalk import DingTalkNotifier, DingTalkSettings, DingTalkUpdate, send_notification
+from .location import Location
 from .network_test import NetworkTestRequest, probe
 from .recording import mix
 from .serial_bridge import SerialBridge, available_ports
@@ -67,6 +68,7 @@ class Service:
         self.bridge = None
         self.last_seen = None
         self.network_waiter = None
+        self.location = Location(self)
         self.agent_settings = AgentSettings(store.recordings.parent / "agent")
         self.calls = Calls(self)
         self.dingtalk_settings = DingTalkSettings(store.recordings.parent / "dingtalk")
@@ -91,6 +93,7 @@ class Service:
             "bridge": {**self.connection, "last_seen": self.last_seen},
             "device": device,
             "messages": self.store.list(),
+            "location": self.location.state,
         }
 
     def broadcast(self):
@@ -124,6 +127,7 @@ class Service:
                         future.set_exception(ConnectionError("USB disconnected"))
             if kind == "call_pcm":
                 continue
+            self.location.consume(event)
             sim_id = (self.device or {}).get("mobile", {}).get("iccid", "")
             if kind == "transport":
                 self.connection.update(
@@ -343,6 +347,13 @@ async def network_test(request: Request, test: NetworkTestRequest):
     if request.headers.get("origin") not in ALLOWED_ORIGINS:
         raise HTTPException(403, "不允许的请求来源")
     return await probe(app.state.service, test)
+
+
+@app.post("/api/location/refresh")
+async def location_refresh(request: Request):
+    if request.headers.get("origin") not in ALLOWED_ORIGINS:
+        raise HTTPException(403, "不允许的请求来源")
+    return await app.state.service.location.refresh()
 
 
 @app.get("/api/calls")

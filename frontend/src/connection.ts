@@ -214,7 +214,7 @@ export type NetworkTestResult = {
   error?: string
   headers?: Record<string, string>
   url: string
-  method: 'HEAD'
+  method: 'GET' | 'HEAD'
   source: 'device_4g'
 }
 export async function testDeviceNetwork(url: string): Promise<NetworkTestResult> {
@@ -227,4 +227,10 @@ export async function testDeviceNetwork(url: string): Promise<NetworkTestResult>
   if (!response.ok)
     throw new Error(typeof data.detail === 'string' ? data.detail : '网络测试请求失败')
   return data
+}
+
+export async function refreshDeviceLocation(): Promise<void> {
+  const response = await fetch('/api/location/refresh', { method: 'POST' })
+  const data = await response.json()
+  if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : '位置更新失败')
 }
